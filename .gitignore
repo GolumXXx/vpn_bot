@@ -1,0 +1,10 @@
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+#Что это значит:
+#.env — прячет токен
+#venv/ и .venv/ — виртуальное окружение
+#__pycache__/ — мусор Python
