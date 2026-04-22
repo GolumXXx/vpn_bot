@@ -264,6 +264,20 @@ def get_subscription_status_text(key: dict) -> str:
 
     return "АКТИВНА ✅" if is_key_active(key) else "ЗАКОНЧИЛАСЬ ❌"
 
+    if not key["is_active"]:
+        return "ЗАКОНЧИЛАСЬ ❌"
+
+    expires_at = key["expires_at"]
+    if expires_at:
+        try:
+            expires_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if datetime.now() >= expires_dt:
+                return "ЗАКОНЧИЛАСЬ ❌"
+        except ValueError:
+            return "ЗАКОНЧИЛАСЬ ❌"
+
+    return "АКТИВНА ✅"
+
 
 def format_subscription_login(key, user=None) -> str:
     if key and key["panel_email"]:

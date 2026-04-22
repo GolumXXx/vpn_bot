@@ -115,7 +115,7 @@ async def process_payment(callback: CallbackQuery):
             )
             return
 
-        await create_paid_key(
+        key = await create_paid_key(
             telegram_id=user.id,
             tariff_name=tariff["name"],
             duration_days=tariff["days"],
@@ -129,6 +129,8 @@ async def process_payment(callback: CallbackQuery):
             "✅ Подписка оформлена\n\n"
             f"Тариф: {tariff['label']}\n"
             "VPN-ключ доступен в разделе «Мои активные ключи»."
+
+
         )
     except XUIError as error:
         await callback.message.answer(

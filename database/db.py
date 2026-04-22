@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from services.short_links import (
+    create_short_link,
     delete_short_link_by_url,
     init_short_links_schema,
 )
@@ -14,6 +15,7 @@ from services.xui_client import XUIClient, XUIError
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "bot.db"
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+SHORT_LINK_BASE_URL = "https://golum.shop"
 
 
 @contextmanager
@@ -164,12 +166,14 @@ async def _issue_key(
             client_uuid=result["uuid"],
             flow=flow,
         )
+        short_uri = create_short_link(uri, base_url=SHORT_LINK_BASE_URL)
+
         with get_connection() as conn:
             _insert_vpn_key(
                 conn=conn,
                 telegram_id=telegram_id,
                 key_name=key_name,
-                key_value=uri,
+                key_value=short_uri,
                 is_trial=int(is_trial),
                 server_id=server["id"],
                 inbound_id=inbound_id,
@@ -190,7 +194,7 @@ async def _issue_key(
                     (_format_datetime(_now()), telegram_id),
                 )
 
-        return uri
+        return short_uri
     finally:
         await client.close()
 
