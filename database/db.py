@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from services.short_links import (
-    create_short_link,
     delete_short_link_by_url,
     init_short_links_schema,
 )
@@ -165,14 +164,12 @@ async def _issue_key(
             client_uuid=result["uuid"],
             flow=flow,
         )
-        public_key_value = create_short_link(uri)
-
         with get_connection() as conn:
             _insert_vpn_key(
                 conn=conn,
                 telegram_id=telegram_id,
                 key_name=key_name,
-                key_value=public_key_value,
+                key_value=uri,
                 is_trial=int(is_trial),
                 server_id=server["id"],
                 inbound_id=inbound_id,
@@ -193,7 +190,7 @@ async def _issue_key(
                     (_format_datetime(_now()), telegram_id),
                 )
 
-        return public_key_value
+        return uri
     finally:
         await client.close()
 

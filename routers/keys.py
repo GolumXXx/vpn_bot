@@ -3,7 +3,7 @@ from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 
 from database.db import (
@@ -15,6 +15,7 @@ from database.db import (
     is_key_active,
     parse_datetime,
 )
+from services.short_links import resolve_vless_link
 
 
 load_dotenv()
@@ -48,8 +49,8 @@ DEVICE_TITLES = {
 DEVICE_CONFIGS = {
     "android": {
         "apps": [
-            ("Happ (Google Play)", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
-            ("APK (если не работает Play)", "https://github.com/2dust/v2rayNG/releases"),
+            ("Установить Happ", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
+            ("Скачать APK", "https://github.com/2dust/v2rayNG/releases"),
         ],
         "steps": [
             "Установи приложение (кнопка ниже)",
@@ -60,8 +61,8 @@ DEVICE_CONFIGS = {
     },
     "ios": {
         "apps": [
-            ("v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
-            ("Happ", "https://apps.apple.com/app/happ-proxy-utility/id6504287215"),
+            ("Установить v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
+            ("Установить Happ", "https://apps.apple.com/app/happ-proxy-utility/id6504287215"),
         ],
         "steps": [
             "Установи приложение",
@@ -72,7 +73,7 @@ DEVICE_CONFIGS = {
     },
     "windows": {
         "apps": [
-            ("Скачать v2rayN", "https://github.com/2dust/v2rayN/releases"),
+            ("Установить v2rayN", "https://github.com/2dust/v2rayN/releases"),
         ],
         "steps": [
             "Скачай v2rayN (кнопка ниже)",
@@ -84,7 +85,7 @@ DEVICE_CONFIGS = {
     },
     "mac": {
         "apps": [
-            ("v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
+            ("Установить v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
         ],
         "steps": [
             "Установи v2rayTun",
@@ -94,6 +95,24 @@ DEVICE_CONFIGS = {
         ],
     },
 }
+
+
+def get_raw_vless_key(key) -> str | None:
+    if not key or not key["key_value"]:
+        return None
+
+    resolved_key = resolve_vless_link(key["key_value"])
+    if resolved_key and resolved_key.startswith("vless://"):
+        return resolved_key
+
+    return None
+
+
+def get_primary_active_key(keys):
+    for key in keys:
+        if is_key_active(key):
+            return key
+    return None
 
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
@@ -135,103 +154,57 @@ def format_time_left(key) -> str:
     return f"{minutes} мин."
 
 
-def get_keys_list_keyboard(keys):
-    buttons = []
+def get_subscription_keyboard(key=None):
+    rows = []
 
-    for key in keys:
-        status_emoji = "✅" if is_key_active(key) else "⏰"
-        trial_mark = " (trial)" if key["is_trial"] else ""
-        buttons.append(
+    if key:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{status_emoji} {key['key_name']}{trial_mark}",
-                    callback_data=f"view_key_{key['id']}",
+                    text="🚀 Подключить VPN",
+                    callback_data=f"connect_key_{key['id']}",
                 )
             ]
         )
 
-    buttons.extend(
+    rows.extend(
         [
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="my_keys_refresh")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")],
         ]
     )
 
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def get_key_card_keyboard(key, user_id):
-    buttons = [
-        [
-            InlineKeyboardButton(
-                text="🚀 Подключить VPN",
-                callback_data=f"connect_key_{key['id']}",
-            )
-        ]
-    ]
-
-    if not key["is_trial"]:
-        buttons.extend(
-            [
-                [
-                    InlineKeyboardButton(
-                        text="📅 +30 дней",
-                        callback_data=f"extend_key:{key['id']}:30",
-                    ),
-                    InlineKeyboardButton(
-                        text="📅 +90 дней",
-                        callback_data=f"extend_key:{key['id']}:90",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="📅 +365 дней",
-                        callback_data=f"extend_key:{key['id']}:365",
-                    )
-                ],
-            ]
-        )
-
-    if user_id in ADMIN_IDS:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text="🗑 Удалить ключ",
-                    callback_data=f"delete_key:{key['id']}",
-                )
-            ]
-        )
-
-    buttons.extend(
-        [
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_keys")],
-            [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"refresh_key_{key['id']}")],
-        ]
-    )
-
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+def get_key_card_keyboard(key):
+    return get_subscription_keyboard(key)
 
 
-def get_device_select_keyboard(key_id):
+def get_device_select_keyboard(key):
+    key_id = key["id"]
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🤖 Android", callback_data=f"device_android:{key_id}"),
                 InlineKeyboardButton(text="🍎 iPhone", callback_data=f"device_ios:{key_id}"),
+                InlineKeyboardButton(text="🤖 Android", callback_data=f"device_android:{key_id}"),
             ],
             [
-                InlineKeyboardButton(text="💻 Mac", callback_data=f"device_mac:{key_id}"),
                 InlineKeyboardButton(text="🪟 Windows", callback_data=f"device_windows:{key_id}"),
+                InlineKeyboardButton(text="💻 Mac", callback_data=f"device_mac:{key_id}"),
             ],
             [
-                InlineKeyboardButton(text="⬅️ Назад к ключу", callback_data=f"view_key_{key_id}")
+                InlineKeyboardButton(text="⬅️ Назад", callback_data=f"view_key_{key_id}")
             ],
         ]
     )
 
 
-def get_connect_app_keyboard(key_id, device_code):
-    device_config = DEVICE_CONFIGS.get(device_code)
+def get_connect_app_keyboard(key, device_code):
+    key_id = key["id"]
+    vless_key = get_raw_vless_key(key)
+    device_config = DEVICE_CONFIGS[device_code]
     app_buttons = [
         InlineKeyboardButton(text=title, url=url)
         for title, url in device_config["apps"]
@@ -239,13 +212,19 @@ def get_connect_app_keyboard(key_id, device_code):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📋 Скопировать ключ",
+                    copy_text=CopyTextButton(text=vless_key),
+                )
+            ],
             app_buttons,
             [
                 InlineKeyboardButton(
                     text="⬅️ Назад к устройствам",
                     callback_data=f"connect_key_{key_id}"
                 )
-            ]
+            ],
         ]
     )
 
@@ -260,72 +239,34 @@ def build_device_connect_text(device_code, key) -> str:
 
     return (
         f"{device_title}\n\n"
-        f"{instruction}\n\n"
-        f"Твой ключ:\n{key['key_value']}"
+        f"{instruction}"
     )
 
 
-def build_keys_list_text(user, keys) -> str:
-    username = f"@{user['username']}" if user["username"] else "нет"
+def format_subscription_type(key) -> str:
+    return "trial" if key["is_trial"] else "paid"
 
+
+def build_subscription_text(key) -> str:
+    if not key:
+        return (
+            "🔑 Мои активные ключи\n\n"
+            "У тебя пока нет активного ключа."
+        )
+
+    login = key["panel_email"] or "—"
     lines = [
         "🔑 Мои активные ключи",
         "",
-        f"👤 Имя: {user['first_name'] or '—'}",
-        f"📛 Username: {username}",
+        f"👤 Логин: {login}",
+        f"📦 Тип подписки: {format_subscription_type(key)}",
+        f"⌛ Осталось: {format_time_left(key)}",
     ]
-
-    if user["used_trial"] and user["trial_activated_at"]:
-        activated_at = parse_datetime(user["trial_activated_at"])
-        if activated_at and (datetime.now() - activated_at).total_seconds() < 86400:
-            lines.append("🎁 Пробный период: активен")
-            lines.append(f"🕒 Дата активации: {user['trial_activated_at']}")
-
-    lines.append("")
-
-    if not keys:
-        lines.append("У тебя пока нет ключей.")
-        return "\n".join(lines)
-
-    lines.extend(
-        [
-            f"Всего ключей: {len(keys)}",
-            "",
-            "Выбери ключ ниже 👇",
-        ]
-    )
     return "\n".join(lines)
 
 
 def build_key_card_text(key) -> str:
-    panel_email = key["panel_email"] or "—"
-    client_uuid = key["client_uuid"] or "—"
-    server_id = key["server_id"] or "—"
-    inbound_id = key["panel_inbound_id"] or "—"
-
-    lines = [
-        f"🔑 {key['key_name']}",
-        "",
-        f"📌 ID ключа: {key['id']}",
-        f"📊 Статус: {format_key_status(key)}",
-        f"🎁 Пробный: {'Да' if key['is_trial'] else 'Нет'}",
-        f"🕒 Создан: {key['created_at']}",
-        f"⏳ Истекает: {key['expires_at'] or '—'}",
-        f"⌛ Осталось: {format_time_left(key)}",
-        "",
-        "🛠 Технические данные ключа:",
-        f"🖥 Server ID: {server_id}",
-        f"📡 Inbound ID: {inbound_id}",
-        f"📧 Panel email: {panel_email}",
-        f"🆔 UUID: {client_uuid}",
-    ]
-
-    if key["key_value"]:
-        lines.extend(["", "🔐 Ключ:", f"{key['key_value']}"])
-    else:
-        lines.extend(["", "ℹ️ Подключение для этого ключа ещё не собрано в готовую ссылку."])
-
-    return "\n".join(lines)
+    return build_subscription_text(key)
 
 
 def get_owned_key(key_id: int, user_id: int):
@@ -340,8 +281,8 @@ def get_owned_key(key_id: int, user_id: int):
 def validate_connectable_key(key):
     if not key:
         return "Ключ не найден"
-    if not key["key_value"]:
-        return "Для этого ключа пока нет готовой ссылки подключения"
+    if not get_raw_vless_key(key):
+        return "Для этого ключа пока нет сырого VLESS подключения"
     if not is_key_active(key):
         return "Этот ключ неактивен или уже истёк. Продли ключ перед подключением."
     return None
@@ -363,11 +304,11 @@ async def render_keys_list(callback: CallbackQuery, answer_text: str | None = No
             await callback.answer()
         return
 
-    keys = get_user_keys(callback.from_user.id)
+    key = get_primary_active_key(get_user_keys(callback.from_user.id))
     await safe_edit_text(
         callback,
-        build_keys_list_text(user, keys),
-        reply_markup=get_keys_list_keyboard(keys),
+        build_subscription_text(key),
+        reply_markup=get_subscription_keyboard(key),
     )
     if answer_text:
         await callback.answer(answer_text)
@@ -379,7 +320,7 @@ async def render_key_card(callback: CallbackQuery, key, answer_text: str | None 
     await safe_edit_text(
         callback,
         build_key_card_text(key),
-        reply_markup=get_key_card_keyboard(key, callback.from_user.id),
+        reply_markup=get_key_card_keyboard(key),
     )
     if answer_text:
         await callback.answer(answer_text)
@@ -510,7 +451,7 @@ async def connect_key_handler(callback: CallbackQuery):
         callback,
         "🚀 Подключение к VPN\n\n"
         "Выбери устройство, на котором будешь использовать VPN:",
-        reply_markup=get_device_select_keyboard(key["id"]),
+        reply_markup=get_device_select_keyboard(key),
     )
     await callback.answer()
 
@@ -544,6 +485,6 @@ async def device_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback,
         build_device_connect_text(device_code, key),
-        reply_markup=get_connect_app_keyboard(key["id"], device_code),
+        reply_markup=get_connect_app_keyboard(key, device_code),
     )
     await callback.answer()

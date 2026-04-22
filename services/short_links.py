@@ -19,19 +19,6 @@ SHORT_CODE_LENGTH = 8
 
 load_dotenv(BASE_DIR / ".env")
 
-# services/short_links.py
-short_links = {
-    "abc123": "https://t.me/your_bot"
-}
-
-def get_original_url(code: str) -> str | None:
-    return short_links.get(code)
-
-def create_short_link(original_url: str, user_id: int = None, link_type: str = None) -> str:
-    code = "abc123"  # можно заменить генерацией
-    short_links[code] = original_url
-    return f"http://127.0.0.1:8000/{code}"
-
 
 @contextmanager
 def get_connection():
@@ -81,6 +68,51 @@ def generate_short_code(length: int = SHORT_CODE_LENGTH) -> str:
     return "".join(secrets.choice(SHORT_CODE_ALPHABET) for _ in range(length))
 
 
+def get_vless_by_code(code: str | None) -> str | None:
+    if not code:
+        return None
+
+    with get_connection() as conn:
+        init_short_links_schema(conn)
+        row = conn.execute(
+            "SELECT vless FROM links WHERE code = ?",
+            (code.strip(),),
+        ).fetchone()
+
+    return row["vless"] if row else None
+
+
+def get_original_url(code: str) -> str | None:
+    return get_vless_by_code(code)
+
+
+def _extract_code_from_url(short_url: str | None) -> str | None:
+    if not short_url:
+        return None
+
+    parsed_url = urlparse(short_url.strip())
+    if parsed_url.scheme not in ("http", "https"):
+        return None
+
+    path_parts = [part for part in parsed_url.path.split("/") if part]
+    return path_parts[-1] if path_parts else None
+
+
+def resolve_vless_link(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    raw_value = value.strip()
+    if raw_value.startswith("vless://"):
+        return raw_value
+
+    code = _extract_code_from_url(raw_value)
+    if not code:
+        return raw_value
+
+    return get_vless_by_code(code) or raw_value
+
+
 def create_short_link(vless_link: str, base_url: str | None = None) -> str:
     if not vless_link or not vless_link.strip():
         raise ValueError("vless_link не может быть пустым")
@@ -112,14 +144,7 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
 
 
 def delete_short_link_by_url(short_url: str | None):
-    if not short_url:
-        return
-
-    parsed_url = urlparse(short_url)
-    if parsed_url.scheme not in ("http", "https"):
-        return
-
-    code = parsed_url.path.strip("/")
+    code = _extract_code_from_url(short_url)
     if not code:
         return
 
