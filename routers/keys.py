@@ -246,23 +246,26 @@ def build_device_connect_text(device_code, key) -> str:
 def format_subscription_type(key) -> str:
     return "trial" if key["is_trial"] else "paid"
 
-
-def build_subscription_text(key) -> str:
+def get_subscription_status_text(key: dict) -> str:
     if not key:
-        return (
-            "🔑 Мои активные ключи\n\n"
-            "У тебя пока нет активного ключа."
-        )
+        return "ЗАКОНЧИЛАСЬ ❌"
 
-    login = key["panel_email"] or "—"
-    lines = [
-        "🔑 Мои активные ключи",
-        "",
-        f"👤 Логин: {login}",
-        f"📦 Тип подписки: {format_subscription_type(key)}",
-        f"⌛ Осталось: {format_time_left(key)}",
-    ]
-    return "\n".join(lines)
+    if not key.get("is_active"):
+        return "ЗАКОНЧИЛАСЬ ❌"
+
+    expires_at = key.get("expires_at")
+    if expires_at:
+        try:
+            expires_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if datetime.now() >= expires_dt:
+                return "ЗАКОНЧИЛАСЬ ❌"
+        except ValueError:
+            return "ЗАКОНЧИЛАСЬ ❌"
+
+    return "АКТИВНА ✅"
+
+
+status_text = get_subscription_status_text(key)
 
 
 def build_key_card_text(key) -> str:
