@@ -265,7 +265,24 @@ def get_subscription_status_text(key: dict) -> str:
     return "АКТИВНА ✅"
 
 
-status_text = get_subscription_status_text(key)
+def build_subscription_text(key) -> str:
+    if not key:
+        return (
+            "🔑 Мои активные ключи\n\n"
+            "У тебя пока нет активного ключа."
+        )
+
+    login = key["panel_email"] or "—"
+    status_text = get_subscription_status_text(key)
+
+    lines = [
+        "🔑 Мои активные ключи",
+        "",
+        f"👤 Логин: {login}",
+        f"📦 Статус: {status_text}",
+        f"⌛ Осталось: {format_time_left(key)}",
+    ]
+    return "\n".join(lines)
 
 
 def build_key_card_text(key) -> str:
