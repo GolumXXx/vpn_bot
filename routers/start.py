@@ -9,16 +9,26 @@ from routers.ui import safe_edit_text
 router = Router()
 
 
+WELCOME_TEXT = (
+    "Привет 👋\n\n"
+    "Здесь можно управлять VPN-ключами, продлевать подписку "
+    "и получать пробный доступ."
+)
+
+MAIN_MENU_TEXT = (
+    "🏠 Главное меню\n\n"
+    "Выбери нужный раздел:"
+)
+
+
 async def send_main_menu(message: Message):
     await message.answer(
-        "Привет 👋\n\n"
-        "Это главное меню бота.\n"
-        "Выбери нужный пункт ниже:",
+        WELCOME_TEXT,
         reply_markup=reply_menu
     )
 
     await message.answer(
-        "Главное меню 👇",
+        MAIN_MENU_TEXT,
         reply_markup=main_inline_menu
     )
 
@@ -41,13 +51,13 @@ async def menu_handler(message: Message):
     user = message.from_user
 
     add_or_update_user(
-    telegram_id=user.id,
-    username=user.username,
-    first_name=user.first_name,
-)
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+    )
 
     await message.answer(
-        "Главное меню 👇",
+        MAIN_MENU_TEXT,
         reply_markup=main_inline_menu
     )
 
@@ -56,7 +66,7 @@ async def menu_handler(message: Message):
 async def back_main_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "Главное меню 👇",
+        MAIN_MENU_TEXT,
         reply_markup=main_inline_menu
     )
     await callback.answer()

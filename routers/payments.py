@@ -20,6 +20,11 @@ TARIFFS = {
     "12m": {"name": "VPN на 12 месяцев", "days": 365, "price": 1490, "label": "12 месяцев"},
 }
 
+RENEW_TEXT = (
+    "💳 Продление VPN\n\n"
+    "Выбери срок подписки:"
+)
+
 
 def build_tariff_text(tariff_code: str) -> str | None:
     tariff = TARIFFS.get(tariff_code)
@@ -27,10 +32,10 @@ def build_tariff_text(tariff_code: str) -> str | None:
         return None
 
     return (
-        "💳 Оплата тарифа\n\n"
-        f"Тариф: {tariff['label']}\n"
-        f"Цена: {tariff['price']} ₽\n\n"
-        "Нажми кнопку ниже для оплаты:"
+        "💳 Оформление подписки\n\n"
+        f"Срок: {tariff['label']}\n"
+        f"Стоимость: {tariff['price']} ₽\n\n"
+        "Если такой ключ уже есть, бот продлит его без дубликата."
     )
 
 
@@ -38,7 +43,7 @@ def build_tariff_text(tariff_code: str) -> str | None:
 async def renew_sub_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "📅 Продлить подписку\n\nВыбери тариф:",
+        RENEW_TEXT,
         reply_markup=renew_menu,
     )
     await callback.answer()
@@ -58,7 +63,7 @@ async def payments_back_main_handler(callback: CallbackQuery):
 async def back_renew_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "📅 Продлить подписку\n\nВыбери тариф:",
+        RENEW_TEXT,
         reply_markup=renew_menu,
     )
     await callback.answer()
@@ -104,9 +109,9 @@ async def process_payment(callback: CallbackQuery):
 
             await callback.answer("Подписка продлена ✅", show_alert=True)
             await callback.message.answer(
-                f"✅ У тебя уже был ключ по тарифу «{tariff['name']}».\n"
-                "Мы не создали дубликат, а продлили существующий ключ.\n\n"
-                f"Новая дата окончания:\n{new_expires}"
+                "✅ Подписка продлена\n\n"
+                "Твой VPN-ключ обновлён.\n"
+                f"Новая дата окончания: {new_expires}"
             )
             return
 
@@ -121,9 +126,17 @@ async def process_payment(callback: CallbackQuery):
 
         await callback.answer("Подписка оформлена ✅", show_alert=True)
         await callback.message.answer(
-            f"✅ Новый VPN-ключ создан по тарифу «{tariff['name']}»"
+            "✅ Подписка оформлена\n\n"
+            f"Тариф: {tariff['label']}\n"
+            "VPN-ключ доступен в разделе «Мои активные ключи»."
         )
     except XUIError as error:
-        await callback.message.answer(f"Ошибка выдачи ключа:\n{error}")
+        await callback.message.answer(
+            "Не удалось выдать VPN-ключ.\n"
+            "Попробуй ещё раз позже или обратись в поддержку."
+        )
     except Exception as error:
-        await callback.message.answer(f"Неожиданная ошибка:\n{error}")
+        await callback.message.answer(
+            "Не удалось оформить подписку.\n"
+            f"Ошибка: {error}"
+        )

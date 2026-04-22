@@ -49,49 +49,49 @@ DEVICE_TITLES = {
 DEVICE_CONFIGS = {
     "android": {
         "apps": [
-            ("Установить Happ", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
-            ("Скачать APK", "https://github.com/2dust/v2rayNG/releases"),
+            ("📲 Установить Happ", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
+            ("📦 Скачать v2rayNG", "https://github.com/2dust/v2rayNG/releases"),
         ],
         "steps": [
-            "Установи приложение (кнопка ниже)",
+            "Установи Happ или v2rayNG",
             "Открой приложение",
+            "Скопируй ключ кнопкой ниже",
             'Нажми "+" -> Import from clipboard',
-            "Вставь ключ",
         ],
     },
     "ios": {
         "apps": [
-            ("Установить v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
-            ("Установить Happ", "https://apps.apple.com/app/happ-proxy-utility/id6504287215"),
+            ("📲 Установить v2RayTun", "https://apps.apple.com/us/app/v2raytun/id6476628951"),
+            ("📲 Установить Happ", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
         ],
         "steps": [
-            "Установи приложение",
+            "Установи v2RayTun или Happ",
             "Открой приложение",
+            "Скопируй ключ кнопкой ниже",
             'Нажми "Add config"',
-            "Вставь ключ",
         ],
     },
     "windows": {
         "apps": [
-            ("Установить v2rayN", "https://github.com/2dust/v2rayN/releases"),
+            ("💻 Скачать v2rayN", "https://github.com/2dust/v2rayN/releases"),
         ],
         "steps": [
-            "Скачай v2rayN (кнопка ниже)",
+            "Скачай v2rayN",
             "Распакуй архив",
             "Запусти v2rayN.exe",
+            "Скопируй ключ кнопкой ниже",
             'Нажми "Import from clipboard"',
-            "Вставь ключ и нажми Start",
         ],
     },
     "mac": {
         "apps": [
-            ("Установить v2rayTun", "https://apps.apple.com/app/v2raytun/id6476628951"),
+            ("💻 Скачать V2RayU", "https://github.com/yanue/V2rayU/releases"),
         ],
         "steps": [
-            "Установи v2rayTun",
-            "Открой приложение",
+            "Скачай V2RayU",
+            "Открой клиент",
+            "Скопируй ключ кнопкой ниже",
             "Добавь конфигурацию",
-            "Вставь ключ",
         ],
     },
 }
@@ -108,11 +108,23 @@ def get_raw_vless_key(key) -> str | None:
     return None
 
 
-def get_primary_active_key(keys):
-    for key in keys:
-        if is_key_active(key):
-            return key
-    return None
+def get_key_relevance_sort_value(key):
+    expires_at = parse_datetime(key["expires_at"])
+    created_at = parse_datetime(key["created_at"])
+    key_id = key["id"] or 0
+
+    return expires_at or created_at or datetime.min, key_id
+
+
+def get_primary_subscription_key(keys):
+    if not keys:
+        return None
+
+    active_keys = [key for key in keys if is_key_active(key)]
+    if active_keys:
+        return max(active_keys, key=get_key_relevance_sort_value)
+
+    return max(keys, key=get_key_relevance_sort_value)
 
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
@@ -187,12 +199,12 @@ def get_device_select_keyboard(key):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🍎 iPhone", callback_data=f"device_ios:{key_id}"),
-                InlineKeyboardButton(text="🤖 Android", callback_data=f"device_android:{key_id}"),
+                InlineKeyboardButton(text="iPhone", callback_data=f"device_ios:{key_id}"),
+                InlineKeyboardButton(text="Android", callback_data=f"device_android:{key_id}"),
             ],
             [
-                InlineKeyboardButton(text="🪟 Windows", callback_data=f"device_windows:{key_id}"),
-                InlineKeyboardButton(text="💻 Mac", callback_data=f"device_mac:{key_id}"),
+                InlineKeyboardButton(text="Windows", callback_data=f"device_windows:{key_id}"),
+                InlineKeyboardButton(text="Mac", callback_data=f"device_mac:{key_id}"),
             ],
             [
                 InlineKeyboardButton(text="⬅️ Назад", callback_data=f"view_key_{key_id}")
@@ -206,22 +218,22 @@ def get_connect_app_keyboard(key, device_code):
     vless_key = get_raw_vless_key(key)
     device_config = DEVICE_CONFIGS[device_code]
     app_buttons = [
-        InlineKeyboardButton(text=title, url=url)
+        [InlineKeyboardButton(text=title, url=url)]
         for title, url in device_config["apps"]
     ]
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            *app_buttons,
             [
                 InlineKeyboardButton(
                     text="📋 Скопировать ключ",
                     copy_text=CopyTextButton(text=vless_key),
                 )
             ],
-            app_buttons,
             [
                 InlineKeyboardButton(
-                    text="⬅️ Назад к устройствам",
+                    text="⬅️ Назад",
                     callback_data=f"connect_key_{key_id}"
                 )
             ],
@@ -250,43 +262,42 @@ def get_subscription_status_text(key: dict) -> str:
     if not key:
         return "ЗАКОНЧИЛАСЬ ❌"
 
-    if not key.get("is_active"):
-        return "ЗАКОНЧИЛАСЬ ❌"
-
-    expires_at = key.get("expires_at")
-    if expires_at:
-        try:
-            expires_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-            if datetime.now() >= expires_dt:
-                return "ЗАКОНЧИЛАСЬ ❌"
-        except ValueError:
-            return "ЗАКОНЧИЛАСЬ ❌"
-
-    return "АКТИВНА ✅"
+    return "АКТИВНА ✅" if is_key_active(key) else "ЗАКОНЧИЛАСЬ ❌"
 
 
-def build_subscription_text(key) -> str:
+def format_subscription_login(key, user=None) -> str:
+    if key and key["panel_email"]:
+        return key["panel_email"]
+
+    if user and user["username"]:
+        username = user["username"]
+        return username if username.startswith("@") else f"@{username}"
+
+    return "—"
+
+
+def build_subscription_text(key, user=None) -> str:
     if not key:
         return (
             "🔑 Мои активные ключи\n\n"
-            "У тебя пока нет активного ключа."
+            "У тебя пока нет ключа."
         )
 
-    login = key["panel_email"] or "—"
+    login = format_subscription_login(key, user)
     status_text = get_subscription_status_text(key)
 
     lines = [
         "🔑 Мои активные ключи",
         "",
         f"👤 Логин: {login}",
-        f"📦 Статус: {status_text}",
+        f"📦 Подписка: {status_text}",
         f"⌛ Осталось: {format_time_left(key)}",
     ]
     return "\n".join(lines)
 
 
-def build_key_card_text(key) -> str:
-    return build_subscription_text(key)
+def build_key_card_text(key, user=None) -> str:
+    return build_subscription_text(key, user)
 
 
 def get_owned_key(key_id: int, user_id: int):
@@ -324,10 +335,10 @@ async def render_keys_list(callback: CallbackQuery, answer_text: str | None = No
             await callback.answer()
         return
 
-    key = get_primary_active_key(get_user_keys(callback.from_user.id))
+    key = get_primary_subscription_key(get_user_keys(callback.from_user.id))
     await safe_edit_text(
         callback,
-        build_subscription_text(key),
+        build_subscription_text(key, user),
         reply_markup=get_subscription_keyboard(key),
     )
     if answer_text:
@@ -337,9 +348,10 @@ async def render_keys_list(callback: CallbackQuery, answer_text: str | None = No
 
 
 async def render_key_card(callback: CallbackQuery, key, answer_text: str | None = None):
+    user = get_user(callback.from_user.id)
     await safe_edit_text(
         callback,
-        build_key_card_text(key),
+        build_key_card_text(key, user),
         reply_markup=get_key_card_keyboard(key),
     )
     if answer_text:
