@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../vpn_bot/.venv"
+		}
+	],
+	"settings": {}
+}
