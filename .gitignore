@@ -4,10 +4,12 @@ venv/
 __pycache__/
 *.pyc
 bot.db
+*.db
 .db
 .sqlite3
 bot_backup.db
 *.sqlite3
+/backups/
 #Что это значит:
 #.env — прячет токен
 #venv/ и .venv/ — виртуальное окружение
