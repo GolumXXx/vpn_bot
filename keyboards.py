@@ -16,12 +16,12 @@ reply_menu = ReplyKeyboardMarkup(
 
 main_inline_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🎁 Пробный доступ 🎁", callback_data="trial_period")],
-        [InlineKeyboardButton(text="💳 Продлить подписку 💳", callback_data="renew_sub")],
-        [InlineKeyboardButton(text="🔑 Мои активные ключи 🔑", callback_data="my_keys")],
-        [InlineKeyboardButton(text="🎁 Пригласить друга 🎁", callback_data="invite")],
-        [InlineKeyboardButton(text="🌐 Наши сервисы 🌐", callback_data="services")],
-        [InlineKeyboardButton(text="🛟 Помощь 🛟", callback_data="help")]
+        [InlineKeyboardButton(text="🎁 Пробный доступ ", callback_data="trial_period")],
+        [InlineKeyboardButton(text="💳 Продлить подписк у", callback_data="renew_sub")],
+        [InlineKeyboardButton(text="🔑 Мои активные ключи ", callback_data="my_keys")],
+        [InlineKeyboardButton(text="🎁 Пригласить друга ", callback_data="invite")],
+        [InlineKeyboardButton(text="🌐 Наши сервисы ", callback_data="services")],
+        [InlineKeyboardButton(text="🛟 Помощь ", callback_data="help")]
     ]
 )
 
@@ -43,7 +43,7 @@ renew_menu = InlineKeyboardMarkup(
 
 help_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Написать в поддержку 💬", url="https://t.me/@golumZX")],
+        [InlineKeyboardButton(text="💬 Написать в поддержку ", url="https://t.me/@golumZX")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
     ]
 )
