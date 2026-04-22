@@ -16,7 +16,7 @@ reply_menu = ReplyKeyboardMarkup(
 
 main_inline_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🔑 Мои активные ключи", callback_data="my_keys")],
+        [InlineKeyboardButton(text="🔑 Мои VPN-ключи", callback_data="my_keys")],
         [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="renew_sub")],
         [InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="trial_period")],
         [InlineKeyboardButton(text="🤝 Пригласить друга", callback_data="invite")],
@@ -65,6 +65,13 @@ services_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="🌐 VPN", callback_data="service_vpn")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
+    ]
+)
+
+payment_done_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔑 Мои VPN-ключи", callback_data="my_keys")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_main")]
     ]
 )
 

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 
@@ -11,6 +12,12 @@ from routers.help import router as help_router
 from routers.keys import router as keys_router
 from routers.invite import router as invite_router
 from routers.services import router as services_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в .env")
@@ -31,10 +38,17 @@ for router in (
 
 
 async def main():
+    logger.info("Starting VPN bot")
     init_db()
+    logger.info("Database initialized")
     await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook cleared, polling started")
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        logger.exception("Bot stopped because of an unhandled error")
+        raise

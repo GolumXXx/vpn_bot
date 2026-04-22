@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
@@ -7,18 +9,16 @@ from routers.ui import safe_edit_text
 from services.xui_client import XUIError
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.callback_query(F.data == "trial_period")
 async def trial_period_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "🔑 Пробный период\n\n"
-        "Что даёт пробный доступ:\n"
-        "• 1 день бесплатно\n"
-        "• только 1 раз на пользователя\n"
-        "• без продления\n\n"
-        "Нажми кнопку ниже:",
+        "🎁 Пробный доступ\n\n"
+        "1 день бесплатно для проверки VPN.\n\n"
+        "Нажми кнопку ниже, чтобы получить доступ.",
         reply_markup=trial_menu
     )
     await callback.answer()
@@ -35,7 +35,7 @@ async def get_trial_handler(callback: CallbackQuery):
     )
 
     if has_used_trial(user.id):
-        await callback.answer("Ты уже использовал пробный период", show_alert=True)
+        await callback.answer("Пробный доступ уже использован", show_alert=True)
         return
 
     try:
@@ -44,14 +44,24 @@ async def get_trial_handler(callback: CallbackQuery):
             username=user.username,
             first_name=user.first_name,
         )
+        logger.info("Created trial VPN key: user_id=%s", user.id)
 
-        await callback.answer("Пробный доступ выдан ✅", show_alert=True)
+        await callback.answer("Пробный доступ готов ✅", show_alert=True)
         await callback.message.answer(
-            f"✅ Пробный ключ создан\n\nВот твой ключ:\n{key}"
+            "✅ Пробный доступ готов\n\n"
+            "Открой «Мои активные ключи», чтобы подключиться."
         )
 
-    except XUIError as e:
-        await callback.answer(f"Ошибка панели: {e}", show_alert=True)
+    except XUIError:
+        logger.exception("XUI error during trial key creation: user_id=%s", user.id)
+        await callback.answer(
+            "Не удалось выдать VPN-ключ. Попробуй позже или обратись в поддержку.",
+            show_alert=True,
+        )
 
-    except Exception as e:
-        await callback.answer(f"Неожиданная ошибка: {e}", show_alert=True)
+    except Exception:
+        logger.exception("Unexpected trial key creation error: user_id=%s", user.id)
+        await callback.answer(
+            "Что-то пошло не так 😕\n\nПопробуй ещё раз или обратись в поддержку.",
+            show_alert=True,
+        )

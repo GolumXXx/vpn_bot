@@ -12,9 +12,9 @@ router = Router()
 async def invite_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "🎁 Пригласить друга\n\n"
-        "Здесь позже будет реферальная система.\n\n"
-        "Пока можно сделать заглушку с приглашением.",
+        "🤝 Пригласить друга\n\n"
+        "Отправь другу свою ссылку на бота.\n\n"
+        "Нажми кнопку ниже, чтобы получить ссылку.",
         reply_markup=invite_menu
     )
     await callback.answer()
@@ -27,6 +27,6 @@ async def get_invite_link_handler(callback: CallbackQuery):
 
     await callback.answer()
     await callback.message.answer(
-        f"🔗 Твоя пригласительная ссылка:\n\n{invite_link}\n\n"
-        "Позже сюда добавим учёт приглашённых пользователей."
+        f"🔗 Твоя ссылка\n\n{invite_link}\n\n"
+        "Отправь её другу, чтобы он открыл бота."
     )

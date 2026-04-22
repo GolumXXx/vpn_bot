@@ -12,9 +12,8 @@ async def help_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         "🛟 Помощь\n\n"
-        "Если у тебя появились вопросы по подключению, оплате или работе VPN,\n"
-        "ты можешь написать в поддержку.\n\n"
-        "Нажми кнопку ниже:",
+        "Если что-то не получается, напиши в поддержку.\n\n"
+        "Мы поможем с подключением и оплатой.",
         reply_markup=help_menu
     )
     await callback.answer()

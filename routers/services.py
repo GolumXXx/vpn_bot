@@ -11,8 +11,8 @@ router = Router()
 async def services_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "⚙️ Наши сервисы\n\n"
-        "Здесь можно показать все твои продукты и услуги.",
+        "🌐 VPN\n\n"
+        "Подключайся и управляй доступом прямо в боте.",
         reply_markup=services_menu
     )
     await callback.answer()
@@ -23,8 +23,7 @@ async def service_vpn_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         "🌐 VPN\n\n"
-        "Это наш основной сервис.\n"
-        "Быстрое подключение, стабильная работа и удобное управление через бота.",
+        "Выбери «Мои активные ключи», чтобы подключиться.",
         reply_markup=services_menu
     )
     await callback.answer()
