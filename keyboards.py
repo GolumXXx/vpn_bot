@@ -7,6 +7,14 @@ from aiogram.types import (
 
 from config import SUPPORT_USERNAME
 
+
+def _build_support_url() -> str:
+    username = SUPPORT_USERNAME.removeprefix("@").strip()
+    if not username or username == "your_support_username":
+        username = "golumZX"
+    return f"https://t.me/{username}"
+
+
 reply_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Главное меню")]
@@ -16,11 +24,11 @@ reply_menu = ReplyKeyboardMarkup(
 
 main_inline_menu = InlineKeyboardMarkup(
     inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Попробовать бесплатно", callback_data="trial_period")],
+        [InlineKeyboardButton(text="💳 Купить / продлить VPN", callback_data="renew_sub")],
         [InlineKeyboardButton(text="🔑 Мои VPN-ключи", callback_data="my_keys")],
-        [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="renew_sub")],
-        [InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="trial_period")],
-        [InlineKeyboardButton(text="🤝 Пригласить друга", callback_data="invite")],
-        [InlineKeyboardButton(text="🛟 Помощь", callback_data="help")]
+        [InlineKeyboardButton(text="📱 Как подключить VPN", callback_data="services")],
+        [InlineKeyboardButton(text="🛟 Поддержка", callback_data="help")]
     ]
 )
 
@@ -42,7 +50,7 @@ renew_menu = InlineKeyboardMarkup(
 
 help_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Написать в поддержку", url="https://t.me/@golumZX")],
+        [InlineKeyboardButton(text="💬 Написать в поддержку", url=_build_support_url())],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
     ]
 )
@@ -63,7 +71,7 @@ invite_menu = InlineKeyboardMarkup(
 
 services_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🌐 VPN", callback_data="service_vpn")],
+        [InlineKeyboardButton(text="🔑 Открыть мои VPN-ключи", callback_data="service_vpn")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
     ]
 )
@@ -75,11 +83,26 @@ payment_done_menu = InlineKeyboardMarkup(
     ]
 )
 
+manual_payment_wait_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="💳 К тарифам", callback_data="back_renew")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="payments_back_main")]
+    ]
+)
+
 
 def get_payment_menu(tariff_code: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", callback_data=f"pay_{tariff_code}")],
+            [InlineKeyboardButton(text="🧾 Оплатить по чеку", callback_data=f"pay_{tariff_code}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")]
+        ]
+    )
+
+
+def get_manual_payment_admin_menu(order_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_manual_payment:{order_id}")]
         ]
     )

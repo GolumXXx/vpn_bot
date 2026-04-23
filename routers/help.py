@@ -11,7 +11,7 @@ router = Router()
 async def help_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "🛟 Помощь\n\n"
+        "🛟 Поддержка\n\n"
         "Если что-то не получается, напиши в поддержку.\n\n"
         "Мы поможем с подключением и оплатой.",
         reply_markup=help_menu

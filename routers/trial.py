@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def trial_period_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
-        "🎁 Пробный доступ\n\n"
+        "🎁 Попробовать бесплатно\n\n"
         "1 день бесплатно для проверки VPN.\n\n"
         "Нажми кнопку ниже, чтобы получить доступ.",
         reply_markup=trial_menu
@@ -49,7 +49,7 @@ async def get_trial_handler(callback: CallbackQuery):
         await callback.answer("Пробный доступ готов ✅", show_alert=True)
         await callback.message.answer(
             "✅ Пробный доступ готов\n\n"
-            "Открой «Мои активные ключи», чтобы подключиться."
+            "Открой «Мои VPN-ключи», чтобы подключиться."
         )
 
     except XUIError:

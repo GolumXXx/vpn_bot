@@ -16,6 +16,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "bot.db"
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHORT_LINK_BASE_URL = "https://golum.shop"
+MANUAL_PAYMENT_STATUS_PENDING = "pending_receipt"
+MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED = "receipt_uploaded"
+MANUAL_PAYMENT_STATUS_PROCESSING = "processing"
+MANUAL_PAYMENT_STATUS_APPROVED = "approved"
+MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 
 
 @contextmanager
@@ -204,6 +209,176 @@ def add_or_update_user(telegram_id, username, first_name):
         _upsert_user(conn, telegram_id, username, first_name)
 
 
+def create_manual_payment(telegram_id, tariff_code):
+    now = _format_datetime(_now())
+
+    for _ in range(5):
+        order_id = uuid.uuid4().hex[:8].upper()
+        try:
+            with get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE manual_payments
+                    SET status = ?,
+                        updated_at = ?
+                    WHERE telegram_id = ?
+                      AND status IN (?, ?)
+                    """,
+                    (
+                        MANUAL_PAYMENT_STATUS_REPLACED,
+                        now,
+                        telegram_id,
+                        MANUAL_PAYMENT_STATUS_PENDING,
+                        MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO manual_payments (
+                        order_id,
+                        telegram_id,
+                        tariff_code,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        order_id,
+                        telegram_id,
+                        tariff_code,
+                        MANUAL_PAYMENT_STATUS_PENDING,
+                        now,
+                        now,
+                    ),
+                )
+            return get_manual_payment_by_order_id(order_id)
+        except sqlite3.IntegrityError:
+            continue
+
+    raise ValueError("Не удалось создать ID оплаты")
+
+
+def get_manual_payment_by_order_id(order_id):
+    return _fetchone(
+        """
+        SELECT *
+        FROM manual_payments
+        WHERE order_id = ?
+        """,
+        (order_id,),
+    )
+
+
+def get_latest_open_manual_payment(telegram_id):
+    return _fetchone(
+        """
+        SELECT *
+        FROM manual_payments
+        WHERE telegram_id = ?
+          AND status IN (?, ?)
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (
+            telegram_id,
+            MANUAL_PAYMENT_STATUS_PENDING,
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+        ),
+    )
+
+
+def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=None, user_message_id=None):
+    now = _format_datetime(_now())
+    _execute(
+        """
+        UPDATE manual_payments
+        SET status = ?,
+            receipt_file_id = ?,
+            receipt_unique_id = ?,
+            user_message_id = ?,
+            updated_at = ?
+        WHERE order_id = ?
+          AND status IN (?, ?)
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            receipt_file_id,
+            receipt_unique_id,
+            user_message_id,
+            now,
+            order_id,
+            MANUAL_PAYMENT_STATUS_PENDING,
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+        ),
+    )
+
+
+def start_manual_payment_processing(order_id, admin_id):
+    now = _format_datetime(_now())
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE manual_payments
+            SET status = ?,
+                approved_by = ?,
+                updated_at = ?
+            WHERE order_id = ?
+              AND status = ?
+            """,
+            (
+                MANUAL_PAYMENT_STATUS_PROCESSING,
+                admin_id,
+                now,
+                order_id,
+                MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
+def reopen_manual_payment(order_id):
+    now = _format_datetime(_now())
+    _execute(
+        """
+        UPDATE manual_payments
+        SET status = ?,
+            approved_by = NULL,
+            updated_at = ?
+        WHERE order_id = ?
+          AND status = ?
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            now,
+            order_id,
+            MANUAL_PAYMENT_STATUS_PROCESSING,
+        ),
+    )
+
+
+def mark_manual_payment_approved(order_id, admin_id):
+    now = _format_datetime(_now())
+    _execute(
+        """
+        UPDATE manual_payments
+        SET status = ?,
+            approved_by = ?,
+            approved_at = ?,
+            updated_at = ?
+        WHERE order_id = ?
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_APPROVED,
+            admin_id,
+            now,
+            now,
+            order_id,
+        ),
+    )
+
+
 def has_used_trial(telegram_id):
     row = _fetchone(
         "SELECT used_trial FROM users WHERE telegram_id = ?",
@@ -361,6 +536,24 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manual_payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT NOT NULL UNIQUE,
+                telegram_id INTEGER NOT NULL,
+                tariff_code TEXT NOT NULL,
+                status TEXT NOT NULL,
+                receipt_file_id TEXT,
+                receipt_unique_id TEXT,
+                user_message_id INTEGER,
+                approved_by INTEGER,
+                approved_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         init_short_links_schema(conn)
         conn.execute(
             """
@@ -395,6 +588,18 @@ def init_db():
             """
             CREATE INDEX IF NOT EXISTS idx_servers_active
             ON servers (is_active)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_manual_payments_user_status
+            ON manual_payments (telegram_id, status, id DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_manual_payments_order_id
+            ON manual_payments (order_id)
             """
         )
 
