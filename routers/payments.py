@@ -3,13 +3,20 @@ import logging
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
-from config import ADMIN_IDS
+from config import (
+    ADMIN_IDS,
+    MANUAL_PAYMENT_URL,
+    PAYMENT_URL_1M,
+    PAYMENT_URL_3M,
+    PAYMENT_URL_12M,
+)
 from database.db import (
     MANUAL_PAYMENT_STATUS_APPROVED,
     MANUAL_PAYMENT_STATUS_PENDING,
     MANUAL_PAYMENT_STATUS_PROCESSING,
     MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
     MANUAL_PAYMENT_STATUS_REPLACED,
+    MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
     add_or_update_user,
     attach_manual_payment_receipt,
     create_manual_payment,
@@ -19,12 +26,16 @@ from database.db import (
     get_latest_paid_key_by_tariff,
     get_manual_payment_by_order_id,
     get_user,
+    mark_manual_payment_waiting_admin,
     mark_manual_payment_approved,
     reopen_manual_payment,
+    reset_manual_payment_waiting_admin,
     start_manual_payment_processing,
 )
 from keyboards import (
     get_manual_payment_admin_menu,
+    get_manual_payment_request_menu,
+    get_manual_payment_waiting_menu,
     get_payment_menu,
     main_inline_menu,
     manual_payment_wait_menu,
@@ -43,6 +54,11 @@ TARIFFS = {
     "1m": {"name": "VPN на 1 месяц", "days": 30, "price": 199, "label": "1 месяц"},
     "3m": {"name": "VPN на 3 месяца", "days": 90, "price": 499, "label": "3 месяца"},
     "12m": {"name": "VPN на 12 месяцев", "days": 365, "price": 1490, "label": "12 месяцев"},
+}
+PAYMENT_URLS = {
+    "1m": PAYMENT_URL_1M or MANUAL_PAYMENT_URL,
+    "3m": PAYMENT_URL_3M or MANUAL_PAYMENT_URL,
+    "12m": PAYMENT_URL_12M or MANUAL_PAYMENT_URL,
 }
 
 RENEW_TEXT = (
@@ -100,16 +116,57 @@ def build_tariff_text(tariff_code: str) -> str | None:
         "💳 Оформление VPN\n\n"
         f"Срок: {tariff['label']}\n"
         f"Стоимость: {tariff['price']} ₽\n\n"
-        "Нажми «Оплатить по чеку», чтобы продолжить."
+        "Нажми «Создать заявку», чтобы продолжить."
     )
 
 
-def build_manual_payment_text(payment, tariff: dict) -> str:
+def get_tariff_payment_url(tariff_code: str) -> str | None:
+    return PAYMENT_URLS.get(tariff_code)
+
+
+def build_manual_payment_text(payment, tariff: dict, payment_url: str | None = None) -> str:
+    lines = [
+        "🧾 Заявка создана",
+        "",
+        f"Твой ID оплаты: {row_get(payment, 'order_id', '—')}",
+        f"Тариф: {tariff['label']}",
+        f"Стоимость: {tariff['price']} ₽",
+        "",
+    ]
+
+    if payment_url:
+        lines.extend(
+            [
+                "1. Нажми кнопку ниже и оплати через Ozon",
+                "2. Отправь чек в этот чат",
+                "3. Нажми «✅ Я оплатил»",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "1. Оплати доступ",
+                "2. Отправь чек в этот чат",
+                "3. Нажми «✅ Я оплатил»",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
+def build_manual_payment_waiting_text(payment, tariff: dict) -> str:
     return (
-        "🧾 Заявка создана\n\n"
+        "⏳ Заявка отправлена на проверку\n\n"
         f"Твой ID оплаты: {row_get(payment, 'order_id', '—')}\n"
-        f"Тариф: {tariff['label']} — {tariff['price']} ₽\n\n"
-        "Оплати и отправь фото чека в этот чат."
+        f"Тариф: {tariff['label']}\n"
+        f"Стоимость: {tariff['price']} ₽"
+    )
+
+
+def build_receipt_received_text() -> str:
+    return (
+        "✅ Чек получен\n\n"
+        "Теперь нажми «✅ Я оплатил»"
     )
 
 
@@ -119,12 +176,13 @@ def build_admin_receipt_text(payment, tariff: dict, user) -> str:
     username_text = f"@{username}" if username else "—"
 
     return (
-        "🧾 Новый чек\n\n"
+        "🧾 Оплата на проверку\n\n"
         f"ID оплаты: {row_get(payment, 'order_id', '—')}\n"
         f"Тариф: {tariff['label']} — {tariff['price']} ₽\n"
         f"Пользователь ID: {row_get(payment, 'telegram_id', '—')}\n"
         f"Логин: {username_text}\n"
-        f"Имя: {first_name}"
+        f"Имя: {first_name}\n\n"
+        "Пользователь нажал «Я оплатил»."
     )
 
 
@@ -163,10 +221,28 @@ def build_admin_payment_success_text(payment, tariff: dict, result: dict) -> str
 def get_manual_payment_status_alert(status: str | None) -> str:
     if status == MANUAL_PAYMENT_STATUS_PENDING:
         return "Чек ещё не получен"
+    if status == MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
+        return "Пользователь ещё не нажал «✅ Я оплатил»"
     if status == MANUAL_PAYMENT_STATUS_PROCESSING:
         return "Эта заявка уже обрабатывается"
     if status == MANUAL_PAYMENT_STATUS_APPROVED:
         return "Оплата уже подтверждена"
+    if status == MANUAL_PAYMENT_STATUS_REPLACED:
+        return "Заявка уже заменена новой"
+    return "Заявка недоступна"
+
+
+def get_user_manual_payment_status_alert(status: str | None) -> str:
+    if status == MANUAL_PAYMENT_STATUS_PENDING:
+        return "Сначала отправь чек в этот чат 🧾"
+    if status == MANUAL_PAYMENT_STATUS_WAITING_ADMIN:
+        return "⏳ Заявка уже отправлена на проверку"
+    if status == MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
+        return "Теперь нажми «✅ Я оплатил»"
+    if status == MANUAL_PAYMENT_STATUS_PROCESSING:
+        return "Оплата уже проверяется"
+    if status == MANUAL_PAYMENT_STATUS_APPROVED:
+        return "Оплата уже подтверждена ✅"
     if status == MANUAL_PAYMENT_STATUS_REPLACED:
         return "Заявка уже заменена новой"
     return "Заявка недоступна"
@@ -229,20 +305,20 @@ async def fulfill_paid_order(
     }
 
 
-async def send_receipt_to_admins(message: Message, payment, tariff: dict) -> int:
+async def send_receipt_to_admins(bot, user, payment, tariff: dict) -> int:
     order_id = row_get(payment, "order_id")
-    if not order_id or not message.photo:
+    receipt_file_id = row_get(payment, "receipt_file_id")
+    if not order_id or not receipt_file_id:
         return 0
 
     sent_count = 0
-    photo = message.photo[-1]
-    caption = build_admin_receipt_text(payment, tariff, message.from_user)
+    caption = build_admin_receipt_text(payment, tariff, user)
 
     for admin_id in ADMIN_ID_SET:
         try:
-            await message.bot.send_photo(
+            await bot.send_photo(
                 chat_id=admin_id,
-                photo=photo.file_id,
+                photo=receipt_file_id,
                 caption=caption,
                 reply_markup=get_manual_payment_admin_menu(order_id),
             )
@@ -252,7 +328,7 @@ async def send_receipt_to_admins(message: Message, payment, tariff: dict) -> int
                 "Failed to send manual payment receipt to admin: order_id=%s admin_id=%s user_id=%s",
                 order_id,
                 admin_id,
-                message.from_user.id,
+                getattr(user, "id", None),
             )
 
     return sent_count
@@ -338,11 +414,17 @@ async def process_payment(callback: CallbackQuery):
             user.id,
             tariff_code,
         )
+        payment_url = get_tariff_payment_url(tariff_code)
+        order_id = row_get(payment, "order_id")
+        reply_markup = manual_payment_wait_menu
+
+        if order_id:
+            reply_markup = get_manual_payment_request_menu(order_id, payment_url)
 
         await safe_edit_text(
             callback.message,
-            build_manual_payment_text(payment, tariff),
-            reply_markup=manual_payment_wait_menu,
+            build_manual_payment_text(payment, tariff, payment_url),
+            reply_markup=reply_markup,
         )
         await callback.answer("Заявка создана ✅", show_alert=True)
     except Exception:
@@ -352,6 +434,83 @@ async def process_payment(callback: CallbackQuery):
             tariff_code,
         )
         await callback.message.answer(GENERIC_ERROR_TEXT)
+
+
+@router.callback_query(F.data.startswith("manual_payment_paid:"))
+async def manual_payment_paid_handler(callback: CallbackQuery):
+    try:
+        order_id = callback.data.split(":", maxsplit=1)[1].strip()
+    except (AttributeError, IndexError):
+        logger.warning(
+            "Invalid manual payment paid callback: data=%s user_id=%s",
+            callback.data,
+            callback.from_user.id,
+        )
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    payment = get_manual_payment_by_order_id(order_id)
+    if not payment or row_get(payment, "telegram_id") != callback.from_user.id:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    status = row_get(payment, "status")
+    if status == MANUAL_PAYMENT_STATUS_PENDING or not row_get(payment, "receipt_file_id"):
+        await callback.answer("Сначала отправь чек в этот чат 🧾", show_alert=True)
+        return
+
+    if status != MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
+        await callback.answer(get_user_manual_payment_status_alert(status), show_alert=True)
+        return
+
+    tariff_code = row_get(payment, "tariff_code")
+    tariff = TARIFFS.get(tariff_code)
+    if not tariff:
+        logger.error(
+            "Invalid manual payment before user confirmation: order_id=%s user_id=%s tariff=%s",
+            order_id,
+            callback.from_user.id,
+            tariff_code,
+        )
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    if not mark_manual_payment_waiting_admin(order_id, user_message_id=callback.message.message_id):
+        payment = get_manual_payment_by_order_id(order_id)
+        await callback.answer(
+            get_user_manual_payment_status_alert(row_get(payment, "status")),
+            show_alert=True,
+        )
+        return
+
+    delivered_to = await send_receipt_to_admins(
+        callback.bot,
+        callback.from_user,
+        payment,
+        tariff,
+    )
+    if delivered_to == 0:
+        reset_manual_payment_waiting_admin(order_id)
+        await callback.answer(
+            "Не удалось отправить заявку админу. Попробуй ещё раз позже.",
+            show_alert=True,
+        )
+        return
+
+    logger.info(
+        "User confirmed manual payment: order_id=%s user_id=%s tariff=%s admins=%s",
+        order_id,
+        callback.from_user.id,
+        tariff_code,
+        delivered_to,
+    )
+
+    await safe_edit_text(
+        callback.message,
+        build_manual_payment_waiting_text(payment, tariff),
+        reply_markup=get_manual_payment_waiting_menu(get_tariff_payment_url(tariff_code)),
+    )
+    await callback.answer("⏳ Ожидаем подтверждения оплаты", show_alert=True)
 
 
 @router.message(F.photo)
@@ -390,19 +549,7 @@ async def receipt_photo_handler(message: Message):
             tariff_code,
         )
 
-        delivered_to = await send_receipt_to_admins(message, payment, tariff)
-        if delivered_to == 0:
-            await message.answer(
-                "Чек получен ✅\n\n"
-                "Не удалось отправить админу.\n"
-                "Попробуй ещё раз позже."
-            )
-            return
-
-        await message.answer(
-            "Чек получен ✅\n\n"
-            "Ожидай подтверждения."
-        )
+        await message.answer(build_receipt_received_text())
     except Exception:
         logger.exception(
             "Unexpected manual receipt processing error: order_id=%s user_id=%s",
@@ -431,7 +578,7 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
         return
 
     status = row_get(payment, "status")
-    if status != MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
+    if status not in {MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED, MANUAL_PAYMENT_STATUS_WAITING_ADMIN}:
         await callback.answer(get_manual_payment_status_alert(status), show_alert=True)
         return
 

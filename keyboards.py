@@ -91,10 +91,36 @@ manual_payment_wait_menu = InlineKeyboardMarkup(
 )
 
 
+def get_manual_payment_request_menu(order_id: str, payment_url: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+
+    if payment_url:
+        rows.append([InlineKeyboardButton(text="💸 Оплатить через Ozon", url=payment_url)])
+
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"manual_payment_paid:{order_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")],
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_manual_payment_waiting_menu(payment_url: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+
+    if payment_url:
+        rows.append([InlineKeyboardButton(text="💳 Открыть оплату", url=payment_url)])
+
+    rows.extend(manual_payment_wait_menu.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def get_payment_menu(tariff_code: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🧾 Оплатить по чеку", callback_data=f"pay_{tariff_code}")],
+            [InlineKeyboardButton(text="💳 Создать заявку", callback_data=f"pay_{tariff_code}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")]
         ]
     )

@@ -18,6 +18,7 @@ DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHORT_LINK_BASE_URL = "https://golum.shop"
 MANUAL_PAYMENT_STATUS_PENDING = "pending_receipt"
 MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED = "receipt_uploaded"
+MANUAL_PAYMENT_STATUS_WAITING_ADMIN = "waiting_admin_confirmation"
 MANUAL_PAYMENT_STATUS_PROCESSING = "processing"
 MANUAL_PAYMENT_STATUS_APPROVED = "approved"
 MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
@@ -222,7 +223,7 @@ def create_manual_payment(telegram_id, tariff_code):
                     SET status = ?,
                         updated_at = ?
                     WHERE telegram_id = ?
-                      AND status IN (?, ?)
+                      AND status IN (?, ?, ?)
                     """,
                     (
                         MANUAL_PAYMENT_STATUS_REPLACED,
@@ -230,6 +231,7 @@ def create_manual_payment(telegram_id, tariff_code):
                         telegram_id,
                         MANUAL_PAYMENT_STATUS_PENDING,
                         MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+                        MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
                     ),
                 )
                 conn.execute(
@@ -289,6 +291,48 @@ def get_latest_open_manual_payment(telegram_id):
     )
 
 
+def mark_manual_payment_waiting_admin(order_id, user_message_id=None):
+    now = _format_datetime(_now())
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE manual_payments
+            SET status = ?,
+                user_message_id = COALESCE(?, user_message_id),
+                updated_at = ?
+            WHERE order_id = ?
+              AND status = ?
+            """,
+            (
+                MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+                user_message_id,
+                now,
+                order_id,
+                MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
+def reset_manual_payment_waiting_admin(order_id):
+    now = _format_datetime(_now())
+    _execute(
+        """
+        UPDATE manual_payments
+        SET status = ?,
+            updated_at = ?
+        WHERE order_id = ?
+          AND status = ?
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            now,
+            order_id,
+            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+        ),
+    )
+
+
 def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=None, user_message_id=None):
     now = _format_datetime(_now())
     _execute(
@@ -325,13 +369,14 @@ def start_manual_payment_processing(order_id, admin_id):
                 approved_by = ?,
                 updated_at = ?
             WHERE order_id = ?
-              AND status = ?
+              AND status IN (?, ?)
             """,
             (
                 MANUAL_PAYMENT_STATUS_PROCESSING,
                 admin_id,
                 now,
                 order_id,
+                MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
                 MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
             ),
         )
@@ -350,7 +395,7 @@ def reopen_manual_payment(order_id):
           AND status = ?
         """,
         (
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
             now,
             order_id,
             MANUAL_PAYMENT_STATUS_PROCESSING,
