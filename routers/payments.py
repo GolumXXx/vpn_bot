@@ -51,9 +51,9 @@ logger = logging.getLogger(__name__)
 ADMIN_ID_SET = set(ADMIN_IDS)
 
 TARIFFS = {
-    "1m": {"name": "VPN на 1 месяц", "days": 30, "price": 1, "label": "1 месяц"},
-    "3m": {"name": "VPN на 3 месяца", "days": 90, "price": 1, "label": "3 месяца"},
-    "12m": {"name": "VPN на 12 месяцев", "days": 365, "price": 1, "label": "12 месяцев"},
+    "1m": {"name": "VPN на 1 месяц", "days": 30, "price": 89, "label": "1 месяц"},
+    "3m": {"name": "VPN на 3 месяца", "days": 90, "price": 269, "label": "3 месяца"},
+    "6m": {"name": "VPN на 12 месяцев", "days": 365, "price": 549, "label": "12 месяцев"},
 }
 PAYMENT_URLS = {
     "1m": PAYMENT_URL_1M or MANUAL_PAYMENT_URL,
