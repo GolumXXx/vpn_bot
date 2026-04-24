@@ -8,7 +8,7 @@ from config import (
     MANUAL_PAYMENT_URL,
     PAYMENT_URL_1M,
     PAYMENT_URL_3M,
-    PAYMENT_URL_12M,
+    PAYMENT_URL_6M,
 )
 from database.db import (
     MANUAL_PAYMENT_STATUS_APPROVED,
@@ -53,12 +53,12 @@ ADMIN_ID_SET = set(ADMIN_IDS)
 TARIFFS = {
     "1m": {"name": "VPN на 1 месяц", "days": 30, "price": 89, "label": "1 месяц"},
     "3m": {"name": "VPN на 3 месяца", "days": 90, "price": 269, "label": "3 месяца"},
-    "6m": {"name": "VPN на 12 месяцев", "days": 365, "price": 549, "label": "12 месяцев"},
+    "6m": {"name": "VPN на 6 месяцев", "days": 180, "price": 549, "label": "6 месяцев"},
 }
 PAYMENT_URLS = {
     "1m": PAYMENT_URL_1M or MANUAL_PAYMENT_URL,
     "3m": PAYMENT_URL_3M or MANUAL_PAYMENT_URL,
-    "12m": PAYMENT_URL_12M or MANUAL_PAYMENT_URL,
+    "6m": PAYMENT_URL_6M or MANUAL_PAYMENT_URL,
 }
 
 RENEW_TEXT = (
