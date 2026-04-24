@@ -273,6 +273,42 @@ def get_manual_payment_by_order_id(order_id):
     )
 
 
+def get_pending_manual_payments(limit=10):
+    return _fetchall(
+        """
+        SELECT *
+        FROM manual_payments
+        WHERE status IN (?, ?, ?, ?)
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_PENDING,
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+            MANUAL_PAYMENT_STATUS_PROCESSING,
+            limit,
+        ),
+    )
+
+
+def count_pending_manual_payments():
+    row = _fetchone(
+        """
+        SELECT COUNT(*)
+        FROM manual_payments
+        WHERE status IN (?, ?, ?, ?)
+        """,
+        (
+            MANUAL_PAYMENT_STATUS_PENDING,
+            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+            MANUAL_PAYMENT_STATUS_PROCESSING,
+        ),
+    )
+    return row[0]
+
+
 def get_latest_open_manual_payment(telegram_id):
     return _fetchone(
         """
@@ -448,6 +484,17 @@ def get_user(telegram_id):
     return _fetchone(
         "SELECT * FROM users WHERE telegram_id = ?",
         (telegram_id,),
+    )
+
+
+def get_user_by_username(username):
+    return _fetchone(
+        """
+        SELECT *
+        FROM users
+        WHERE lower(username) = lower(?)
+        """,
+        (username.removeprefix("@").strip(),),
     )
 
 
@@ -748,6 +795,48 @@ def get_user_key_stats(telegram_id):
     return {
         "total_keys": row["total_keys"] or 0,
         "active_keys": row["active_keys"] or 0,
+    }
+
+
+def get_admin_dashboard_stats():
+    now = _format_datetime(_now())
+    users = _fetchone("SELECT COUNT(*) FROM users")[0]
+    keys = _fetchone(
+        """
+        SELECT
+            COUNT(*) AS total_keys,
+            SUM(
+                CASE
+                    WHEN is_active = 1
+                     AND (
+                         expires_at IS NULL
+                         OR expires_at = ''
+                         OR expires_at > ?
+                     )
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS active_keys,
+            SUM(
+                CASE
+                    WHEN expires_at IS NOT NULL
+                     AND expires_at != ''
+                     AND expires_at <= ?
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS expired_keys
+        FROM vpn_keys
+        """,
+        (now, now),
+    )
+
+    return {
+        "users": users or 0,
+        "total_keys": keys["total_keys"] or 0,
+        "active_keys": keys["active_keys"] or 0,
+        "expired_keys": keys["expired_keys"] or 0,
+        "pending_payments": count_pending_manual_payments(),
     }
 
 

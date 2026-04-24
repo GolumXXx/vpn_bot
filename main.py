@@ -12,6 +12,7 @@ from routers.help import router as help_router
 from routers.keys import router as keys_router
 from routers.invite import router as invite_router
 from routers.services import router as services_router
+from routers.admin import router as admin_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +34,7 @@ for router in (
     keys_router,
     invite_router,
     services_router,
+    admin_router,
 ):
     dp.include_router(router)
 

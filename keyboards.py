@@ -132,3 +132,39 @@ def get_manual_payment_admin_menu(order_id: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_manual_payment:{order_id}")]
         ]
     )
+
+
+admin_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin_dashboard")],
+        [InlineKeyboardButton(text="💰 Ожидающие оплаты", callback_data="admin_payments")],
+        [InlineKeyboardButton(text="🔍 Поиск пользователей", callback_data="admin_search")],
+        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
+    ]
+)
+
+admin_back_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")],
+        [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
+    ]
+)
+
+
+def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
+    rows = []
+
+    for payment in payments:
+        if payment["status"] == "waiting_admin_confirmation":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"✅ Подтвердить {payment['order_id']}",
+                        callback_data=f"approve_manual_payment:{payment['order_id']}",
+                    )
+                ]
+            )
+
+    rows.extend(admin_back_menu.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
