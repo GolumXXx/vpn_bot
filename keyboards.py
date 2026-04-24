@@ -43,7 +43,7 @@ renew_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="💳 1 месяц — 89 ₽", callback_data="tariff_1m")],
         [InlineKeyboardButton(text="💳 3 месяца — 269 ₽", callback_data="tariff_3m")],
-        [InlineKeyboardButton(text="💳 12 месяцев — 549 ₽", callback_data="tariff_12m")],
+        [InlineKeyboardButton(text="💳 6 месяцев — 549 ₽", callback_data="tariff_12m")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="payments_back_main")]
     ]
 )
