@@ -5,7 +5,10 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-from config import SUPPORT_USERNAME
+from config import ADMIN_IDS, SUPPORT_USERNAME
+
+
+ADMIN_ID_SET = set(ADMIN_IDS)
 
 
 def _build_support_url() -> str:
@@ -22,15 +25,22 @@ reply_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-main_inline_menu = InlineKeyboardMarkup(
-    inline_keyboard=[
+def get_main_inline_menu(user_id: int | None = None) -> InlineKeyboardMarkup:
+    rows = [
         [InlineKeyboardButton(text="🎁 Попробовать бесплатно", callback_data="trial_period")],
         [InlineKeyboardButton(text="💳 Купить / продлить VPN", callback_data="renew_sub")],
         [InlineKeyboardButton(text="🔑 Мои VPN-ключи", callback_data="my_keys")],
         [InlineKeyboardButton(text="📱 Как подключить VPN", callback_data="services")],
-        [InlineKeyboardButton(text="🛟 Поддержка", callback_data="help")]
+        [InlineKeyboardButton(text="🛟 Поддержка", callback_data="help")],
     ]
-)
+
+    if user_id in ADMIN_ID_SET:
+        rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_menu")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+main_inline_menu = get_main_inline_menu()
 
 trial_menu = InlineKeyboardMarkup(
     inline_keyboard=[

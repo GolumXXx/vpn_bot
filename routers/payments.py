@@ -33,11 +33,11 @@ from database.db import (
     start_manual_payment_processing,
 )
 from keyboards import (
+    get_main_inline_menu,
     get_manual_payment_admin_menu,
     get_manual_payment_request_menu,
     get_manual_payment_waiting_menu,
     get_payment_menu,
-    main_inline_menu,
     manual_payment_wait_menu,
     payment_done_menu,
     renew_menu,
@@ -349,7 +349,7 @@ async def payments_back_main_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         MAIN_MENU_TEXT,
-        reply_markup=main_inline_menu,
+        reply_markup=get_main_inline_menu(callback.from_user.id),
     )
     await callback.answer()
 

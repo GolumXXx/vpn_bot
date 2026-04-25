@@ -3,7 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 
 from database.db import add_or_update_user
-from keyboards import reply_menu, main_inline_menu
+from keyboards import get_main_inline_menu, reply_menu
 from routers.ui import safe_edit_text
 
 router = Router()
@@ -37,7 +37,7 @@ async def send_main_menu(message: Message):
 
     await message.answer(
         MAIN_MENU_TEXT,
-        reply_markup=main_inline_menu
+        reply_markup=get_main_inline_menu(message.from_user.id)
     )
 
 
@@ -66,7 +66,7 @@ async def menu_handler(message: Message):
 
     await message.answer(
         MAIN_MENU_TEXT,
-        reply_markup=main_inline_menu
+        reply_markup=get_main_inline_menu(user.id)
     )
 
 
@@ -75,6 +75,6 @@ async def back_main_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         MAIN_MENU_TEXT,
-        reply_markup=main_inline_menu
+        reply_markup=get_main_inline_menu(callback.from_user.id)
     )
     await callback.answer()
