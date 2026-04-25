@@ -8,11 +8,13 @@ from aiogram.types import CallbackQuery, Message
 from config import ADMIN_IDS
 from database.db import (
     MANUAL_PAYMENT_STATUS_PENDING,
+    add_bot_log,
     cancel_pending_manual_payment,
     delete_key_completely,
     extend_key,
     get_admin_dashboard_stats,
     get_key_by_id,
+    get_latest_bot_logs,
     get_manual_payment_by_order_id,
     get_pending_manual_payments,
     get_user,
@@ -25,6 +27,7 @@ from database.db import (
 )
 from keyboards import (
     admin_back_menu,
+    admin_logs_menu,
     admin_menu,
     get_admin_delete_key_confirm_menu,
     get_admin_pending_payments_menu,
@@ -122,6 +125,48 @@ def build_pending_payments_text(payments) -> str:
         )
 
     return "\n".join(lines).rstrip()
+
+
+def format_log_message(log) -> str:
+    message = row_get(log, "message")
+    if not message:
+        return "—"
+
+    message = str(message).replace("\n", " ").strip()
+    if len(message) > 80:
+        return f"{message[:79]}…"
+    return message
+
+
+def build_admin_logs_text(logs) -> str:
+    if not logs:
+        return "📜 Логи\n\nСобытий пока нет."
+
+    lines = ["📜 Логи", "", "Последние 20 событий:"]
+    for log in logs:
+        meta = []
+        telegram_id = row_get(log, "telegram_id")
+        key_id = row_get(log, "key_id")
+        order_id = row_get(log, "order_id")
+
+        if telegram_id:
+            meta.append(f"user_id={telegram_id}")
+        if key_id:
+            meta.append(f"key_id={key_id}")
+        if order_id:
+            meta.append(f"order_id={order_id}")
+
+        lines.extend(
+            [
+                "",
+                f"{row_get(log, 'created_at', '—')}",
+                f"Тип: {row_get(log, 'event_type', '—')}",
+                " ".join(meta) if meta else "Без привязки",
+                f"Сообщение: {format_log_message(log)}",
+            ]
+        )
+
+    return "\n".join(lines)
 
 
 def format_key_status(key) -> str:
@@ -260,6 +305,28 @@ async def render_admin_payments(callback: CallbackQuery, answer_text: str | None
         await callback.answer()
 
 
+async def render_admin_logs(callback: CallbackQuery, answer_text: str | None = None):
+    await safe_edit_text(
+        callback.message,
+        build_admin_logs_text(get_latest_bot_logs(20)),
+        reply_markup=admin_logs_menu,
+    )
+    if answer_text:
+        await callback.answer(answer_text)
+    else:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "admin_logs")
+async def admin_logs_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    clear_admin_waiting_state(callback.from_user.id)
+    await render_admin_logs(callback)
+
+
 @router.callback_query(F.data.startswith("admin_remind_payment:"))
 async def admin_remind_payment_handler(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -332,6 +399,15 @@ async def admin_cancel_payment_handler(callback: CallbackQuery):
     if not cancel_pending_manual_payment(order_id):
         await callback.answer("Не удалось отменить заявку", show_alert=True)
         return
+
+    user = get_user(row_get(payment, "telegram_id"))
+    add_bot_log(
+        "payment_cancelled_admin",
+        telegram_id=row_get(payment, "telegram_id"),
+        username=row_get(user, "username"),
+        order_id=order_id,
+        message=f"Заявка отменена админом {callback.from_user.id}",
+    )
 
     try:
         await callback.bot.send_message(
@@ -523,7 +599,7 @@ async def admin_extend_key_handler(callback: CallbackQuery):
         return
 
     try:
-        extend_key(key_id, 30)
+        new_expires = extend_key(key_id, 30)
     except Exception:
         logger.exception("Failed to extend key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
         await callback.answer("Не удалось продлить ключ", show_alert=True)
@@ -531,6 +607,13 @@ async def admin_extend_key_handler(callback: CallbackQuery):
 
     telegram_id = row_get(key, "telegram_id")
     user = get_user(telegram_id)
+    add_bot_log(
+        "key_extended_admin",
+        telegram_id=telegram_id,
+        username=row_get(user, "username"),
+        key_id=key_id,
+        message=f"Ключ продлён админом {callback.from_user.id} до {new_expires}",
+    )
     keys = get_user_keys(telegram_id)
     await safe_edit_text(
         callback.message,
@@ -607,6 +690,13 @@ async def admin_delete_key_confirm_handler(callback: CallbackQuery):
         return
 
     user = get_user(telegram_id)
+    add_bot_log(
+        "key_deleted_admin",
+        telegram_id=telegram_id,
+        username=row_get(user, "username"),
+        key_id=key_id,
+        message=message or f"Ключ удалён админом {callback.from_user.id}",
+    )
     keys = get_user_keys(telegram_id)
     await safe_edit_text(
         callback.message,

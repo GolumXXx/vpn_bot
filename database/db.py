@@ -1,5 +1,6 @@
 import sqlite3
 import uuid
+import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,7 @@ MANUAL_PAYMENT_STATUS_APPROVED = "approved"
 MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
 VALID_DEVICE_TYPES = {"ios", "android", "windows", "mac"}
+BOT_LOG_MESSAGE_MAX_LENGTH = 500
 
 
 @contextmanager
@@ -72,6 +74,19 @@ def _now():
 
 def _format_datetime(value: datetime) -> str:
     return value.strftime(DATETIME_FORMAT)
+
+
+def _sanitize_bot_log_message(message):
+    if message is None:
+        return None
+
+    text = str(message)
+    text = re.sub(r"vless://\S+", "[vless скрыт]", text)
+    text = re.sub(r"https?://\S+", "[url скрыт]", text)
+    text = text.strip()
+    if len(text) > BOT_LOG_MESSAGE_MAX_LENGTH:
+        text = text[: BOT_LOG_MESSAGE_MAX_LENGTH - 1] + "…"
+    return text
 
 
 def _upsert_user(conn, telegram_id, username, first_name):
@@ -221,6 +236,63 @@ async def _issue_key(
 def add_or_update_user(telegram_id, username, first_name):
     with get_connection() as conn:
         _upsert_user(conn, telegram_id, username, first_name)
+
+
+def add_bot_log(
+    event_type,
+    telegram_id=None,
+    username=None,
+    key_id=None,
+    order_id=None,
+    message=None,
+):
+    if not event_type:
+        return
+
+    try:
+        _execute(
+            """
+            INSERT INTO bot_logs (
+                created_at,
+                event_type,
+                telegram_id,
+                username,
+                key_id,
+                order_id,
+                message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _format_datetime(_now()),
+                str(event_type)[:80],
+                telegram_id,
+                username,
+                key_id,
+                order_id,
+                _sanitize_bot_log_message(message),
+            ),
+        )
+    except sqlite3.Error:
+        return
+
+
+def get_latest_bot_logs(limit=20):
+    try:
+        safe_limit = int(limit)
+    except (TypeError, ValueError):
+        safe_limit = 20
+
+    safe_limit = max(1, min(safe_limit, 100))
+    return _fetchall(
+        """
+        SELECT *
+        FROM bot_logs
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
 
 
 def create_manual_payment(telegram_id, tariff_code):
@@ -770,6 +842,20 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                event_type TEXT,
+                telegram_id INTEGER,
+                username TEXT,
+                key_id INTEGER,
+                order_id TEXT,
+                message TEXT
+            )
+            """
+        )
         init_short_links_schema(conn)
         _add_column_if_missing(conn, "manual_payments", "manual_reminded_at", "TEXT")
         _add_column_if_missing(conn, "manual_payments", "cancelled_at", "TEXT")
@@ -818,6 +904,12 @@ def init_db():
             """
             CREATE INDEX IF NOT EXISTS idx_manual_payments_order_id
             ON manual_payments (order_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_bot_logs_created_at
+            ON bot_logs (id DESC)
             """
         )
 

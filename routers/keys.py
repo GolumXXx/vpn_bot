@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import qrcode
 
 from database.db import (
+    add_bot_log,
     delete_key_completely,
     extend_key,
     get_active_keys_for_reminders,
@@ -738,6 +739,13 @@ async def extend_key_handler(callback: CallbackQuery):
         days,
     )
     updated_key = get_key_by_id(key_id)
+    add_bot_log(
+        "key_extended",
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+        key_id=key_id,
+        message=f"Ключ продлён на {days} дней",
+    )
     await render_key_card(callback, updated_key, f"Подписка продлена на {days} дней")
 
 
@@ -753,6 +761,8 @@ async def delete_key_handler(callback: CallbackQuery):
         logger.warning("Invalid delete_key_confirm callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
+
+    key_before_delete = get_key_by_id(key_id)
 
     try:
         success, message = await delete_key_completely(key_id)
@@ -776,6 +786,14 @@ async def delete_key_handler(callback: CallbackQuery):
         return
 
     logger.info("Deleted VPN key: user_id=%s key_id=%s", callback.from_user.id, key_id)
+    target_user = get_user(row_get(key_before_delete, "telegram_id"))
+    add_bot_log(
+        "key_deleted_admin",
+        telegram_id=row_get(key_before_delete, "telegram_id"),
+        username=row_get(target_user, "username"),
+        key_id=key_id,
+        message=message or f"Ключ удалён админом {callback.from_user.id}",
+    )
     await render_keys_list(callback, "Ключ удалён ✅")
 
 

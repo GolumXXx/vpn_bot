@@ -18,6 +18,7 @@ from database.db import (
     MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
     MANUAL_PAYMENT_STATUS_REPLACED,
     MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+    add_bot_log,
     add_or_update_user,
     attach_manual_payment_receipt,
     cancel_pending_manual_payment,
@@ -28,6 +29,7 @@ from database.db import (
     get_latest_paid_key_by_tariff,
     get_manual_payment_by_order_id,
     get_user,
+    get_user_keys,
     mark_manual_payment_waiting_admin,
     mark_manual_payment_approved,
     reopen_manual_payment,
@@ -256,6 +258,7 @@ async def fulfill_paid_order(
     tariff_code: str,
     username: str | None = None,
     first_name: str | None = None,
+    order_id: str | None = None,
 ) -> dict:
     tariff = TARIFFS.get(tariff_code)
     if not tariff:
@@ -281,10 +284,19 @@ async def fulfill_paid_order(
             key_id,
             new_expires,
         )
+        add_bot_log(
+            "paid_key_extended",
+            telegram_id=telegram_id,
+            username=username,
+            key_id=key_id,
+            order_id=order_id,
+            message=f"Платный ключ продлён: тариф={tariff_code}, до={new_expires}",
+        )
         return {
             "action": "extended",
             "expires_at": new_expires,
             "tariff": tariff,
+            "key_id": key_id,
         }
 
     await create_paid_key(
@@ -295,16 +307,27 @@ async def fulfill_paid_order(
         first_name=first_name,
         traffic_limit_gb=0,
     )
+    keys = get_user_keys(telegram_id)
+    key_id = row_get(keys[0], "id") if keys else None
     logger.info(
         "Created paid VPN key after manual confirmation: user_id=%s tariff=%s days=%s",
         telegram_id,
         tariff_code,
         tariff["days"],
     )
+    add_bot_log(
+        "paid_key_created",
+        telegram_id=telegram_id,
+        username=username,
+        key_id=key_id,
+        order_id=order_id,
+        message=f"Платный ключ создан: тариф={tariff_code}, дней={tariff['days']}",
+    )
     return {
         "action": "created",
         "expires_at": None,
         "tariff": tariff,
+        "key_id": key_id,
     }
 
 
@@ -417,6 +440,13 @@ async def process_payment(callback: CallbackQuery):
             user.id,
             tariff_code,
         )
+        add_bot_log(
+            "payment_request_created",
+            telegram_id=user.id,
+            username=user.username,
+            order_id=row_get(payment, "order_id"),
+            message=f"Создана заявка на оплату: тариф={tariff_code}",
+        )
         payment_url = get_tariff_payment_url(tariff_code)
         order_id = row_get(payment, "order_id")
         reply_markup = manual_payment_wait_menu
@@ -466,6 +496,13 @@ async def cancel_manual_payment_handler(callback: CallbackQuery):
         await callback.answer(get_user_manual_payment_status_alert(row_get(payment, "status")), show_alert=True)
         return
 
+    add_bot_log(
+        "payment_cancelled_user",
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+        order_id=order_id,
+        message="Заявка отменена пользователем",
+    )
     await safe_edit_text(callback.message, "❌ Заявка отменена")
     await callback.answer("Заявка отменена")
 
@@ -604,6 +641,13 @@ async def receipt_photo_handler(message: Message):
             tariff_code,
             delivered_to,
         )
+        add_bot_log(
+            "payment_receipt_sent",
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            order_id=order_id,
+            message=f"Чек отправлен админам: тариф={tariff_code}, admins={delivered_to}",
+        )
 
         await message.answer(build_receipt_received_text())
     except Exception:
@@ -660,8 +704,17 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
             tariff_code=tariff_code,
             username=row_get(user, "username"),
             first_name=row_get(user, "first_name"),
+            order_id=order_id,
         )
         mark_manual_payment_approved(order_id, callback.from_user.id)
+        add_bot_log(
+            "payment_approved",
+            telegram_id=telegram_id,
+            username=row_get(user, "username"),
+            key_id=result.get("key_id"),
+            order_id=order_id,
+            message=f"Оплата подтверждена админом {callback.from_user.id}: тариф={tariff_code}",
+        )
     except XUIError:
         reopen_manual_payment(order_id)
         logger.exception(
@@ -669,6 +722,13 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
             order_id,
             callback.from_user.id,
             telegram_id,
+        )
+        add_bot_log(
+            "key_issue_error",
+            telegram_id=telegram_id,
+            username=row_get(user, "username"),
+            order_id=order_id,
+            message=f"Ошибка XUI при выдаче платного ключа: тариф={tariff_code}",
         )
         await callback.answer(VPN_KEY_ERROR_TEXT, show_alert=True)
         await callback.message.answer(
@@ -683,6 +743,13 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
             order_id,
             callback.from_user.id,
             telegram_id,
+        )
+        add_bot_log(
+            "key_issue_error",
+            telegram_id=telegram_id,
+            username=row_get(user, "username"),
+            order_id=order_id,
+            message=f"Ошибка обработки оплаченной заявки: тариф={tariff_code}",
         )
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         await callback.message.answer(

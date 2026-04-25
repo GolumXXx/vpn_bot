@@ -157,6 +157,7 @@ admin_menu = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin_dashboard")],
         [InlineKeyboardButton(text="💰 Ожидающие оплаты", callback_data="admin_payments")],
         [InlineKeyboardButton(text="🔑 Управление ключами", callback_data="admin_keys")],
+        [InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs")],
         [InlineKeyboardButton(text="🔍 Поиск пользователей", callback_data="admin_search")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
@@ -167,6 +168,13 @@ admin_back_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="admin_menu")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
+    ]
+)
+
+admin_logs_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_logs")],
+        [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="admin_menu")],
     ]
 )
 
