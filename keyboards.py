@@ -73,7 +73,7 @@ help_menu = InlineKeyboardMarkup(
                 url="https://telegra.ph/Politika-konfidencialnosti-04-25-30",
             )
         ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_main")]
     ]
 )
 
