@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -6,16 +7,24 @@ from aiogram.types import CallbackQuery, Message
 
 from config import ADMIN_IDS
 from database.db import (
+    delete_key_completely,
+    extend_key,
     get_admin_dashboard_stats,
+    get_key_by_id,
     get_pending_manual_payments,
     get_user,
     get_user_by_username,
+    get_user_keys,
     get_user_key_stats,
+    is_key_active,
+    parse_datetime,
 )
 from keyboards import (
     admin_back_menu,
     admin_menu,
+    get_admin_delete_key_confirm_menu,
     get_admin_pending_payments_menu,
+    get_admin_user_keys_menu,
 )
 from routers.payments import TARIFFS
 from routers.ui import safe_edit_text
@@ -25,6 +34,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 ADMIN_ID_SET = set(ADMIN_IDS)
 WAITING_SEARCH_ADMINS = set()
+WAITING_KEY_SEARCH_ADMINS = set()
 
 ADMIN_MENU_TEXT = (
     "🛠 Админ-панель\n\n"
@@ -34,6 +44,11 @@ ADMIN_MENU_TEXT = (
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_ID_SET
+
+
+def clear_admin_waiting_state(user_id: int):
+    WAITING_SEARCH_ADMINS.discard(user_id)
+    WAITING_KEY_SEARCH_ADMINS.discard(user_id)
 
 
 def row_get(row, field, default=None):
@@ -97,6 +112,57 @@ def build_pending_payments_text(payments) -> str:
     return "\n".join(lines).rstrip()
 
 
+def format_key_status(key) -> str:
+    try:
+        if is_key_active(key):
+            return "активен"
+    except (IndexError, KeyError, TypeError, ValueError):
+        pass
+
+    expires_at = parse_datetime(row_get(key, "expires_at"))
+    if expires_at and expires_at <= datetime.now():
+        return "истёк"
+
+    return "неактивен"
+
+
+def build_admin_keys_text() -> str:
+    return (
+        "🔑 Управление ключами\n\n"
+        "Отправь telegram_id пользователя."
+    )
+
+
+def build_admin_user_keys_text(user, keys) -> str:
+    username = f"@{user['username']}" if row_get(user, "username") else "нет"
+    lines = [
+        "🔑 Управление ключами",
+        "",
+        f"Пользователь: {row_get(user, 'telegram_id', '—')}",
+        f"Username: {username}",
+        f"Имя: {row_get(user, 'first_name', '—')}",
+        "",
+    ]
+
+    if not keys:
+        lines.append("Ключей нет.")
+        return "\n".join(lines)
+
+    lines.append("Ключи:")
+    for key in keys:
+        lines.extend(
+            [
+                "",
+                f"ID: {row_get(key, 'id', '—')}",
+                f"Название: {row_get(key, 'key_name', 'VPN-ключ')}",
+                f"Статус: {format_key_status(key)}",
+                f"Действует до: {row_get(key, 'expires_at', '—')}",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
 def build_user_search_text(user) -> str:
     key_stats = get_user_key_stats(user["telegram_id"])
     username = f"@{user['username']}" if user["username"] else "нет"
@@ -129,6 +195,7 @@ async def admin_command_handler(message: Message):
         await message.answer("⛔ Доступ запрещён")
         return
 
+    clear_admin_waiting_state(message.from_user.id)
     await show_admin_menu(message)
 
 
@@ -138,6 +205,7 @@ async def admin_menu_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
+    clear_admin_waiting_state(callback.from_user.id)
     await show_admin_menu(callback)
 
 
@@ -170,12 +238,29 @@ async def admin_payments_handler(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin_keys")
+async def admin_keys_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    WAITING_SEARCH_ADMINS.discard(callback.from_user.id)
+    WAITING_KEY_SEARCH_ADMINS.add(callback.from_user.id)
+    await safe_edit_text(
+        callback.message,
+        build_admin_keys_text(),
+        reply_markup=admin_back_menu,
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin_search")
 async def admin_search_handler(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
+    WAITING_KEY_SEARCH_ADMINS.discard(callback.from_user.id)
     WAITING_SEARCH_ADMINS.add(callback.from_user.id)
     await safe_edit_text(
         callback.message,
@@ -188,7 +273,36 @@ async def admin_search_handler(callback: CallbackQuery):
 
 @router.message(F.text)
 async def admin_search_message_handler(message: Message):
-    if not is_admin(message.from_user.id) or message.from_user.id not in WAITING_SEARCH_ADMINS:
+    if not is_admin(message.from_user.id):
+        return
+
+    if message.from_user.id in WAITING_KEY_SEARCH_ADMINS:
+        query = message.text.strip()
+        if not query.isdigit():
+            await message.answer(
+                "Отправь telegram_id пользователя.",
+                reply_markup=admin_back_menu,
+            )
+            return
+
+        WAITING_KEY_SEARCH_ADMINS.discard(message.from_user.id)
+        telegram_id = int(query)
+        user = get_user(telegram_id)
+        if not user:
+            await message.answer(
+                "Пользователь не найден.",
+                reply_markup=admin_back_menu,
+            )
+            return
+
+        keys = get_user_keys(telegram_id)
+        await message.answer(
+            build_admin_user_keys_text(user, keys),
+            reply_markup=get_admin_user_keys_menu(keys),
+        )
+        return
+
+    if message.from_user.id not in WAITING_SEARCH_ADMINS:
         return
 
     query = message.text.strip()
@@ -218,6 +332,147 @@ async def admin_search_message_handler(message: Message):
     )
 
 
+@router.callback_query(F.data.startswith("admin_key:"))
+async def admin_key_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        key_id = int(callback.data.split(":", maxsplit=1)[1])
+    except (AttributeError, IndexError, ValueError):
+        logger.warning("Invalid admin key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось открыть ключ", show_alert=True)
+        return
+
+    key = get_key_by_id(key_id)
+    if not key:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    telegram_id = row_get(key, "telegram_id")
+    user = get_user(telegram_id)
+    keys = get_user_keys(telegram_id)
+    await safe_edit_text(
+        callback.message,
+        build_admin_user_keys_text(user, keys),
+        reply_markup=get_admin_user_keys_menu(keys),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_extend_key:"))
+async def admin_extend_key_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        key_id = int(callback.data.split(":", maxsplit=1)[1])
+    except (AttributeError, IndexError, ValueError):
+        logger.warning("Invalid admin extend key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось продлить ключ", show_alert=True)
+        return
+
+    key = get_key_by_id(key_id)
+    if not key:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    try:
+        extend_key(key_id, 30)
+    except Exception:
+        logger.exception("Failed to extend key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
+        await callback.answer("Не удалось продлить ключ", show_alert=True)
+        return
+
+    telegram_id = row_get(key, "telegram_id")
+    user = get_user(telegram_id)
+    keys = get_user_keys(telegram_id)
+    await safe_edit_text(
+        callback.message,
+        build_admin_user_keys_text(user, keys),
+        reply_markup=get_admin_user_keys_menu(keys),
+    )
+    await callback.answer("Ключ продлён на 30 дней ✅", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_delete_key:"))
+async def admin_delete_key_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        key_id = int(callback.data.split(":", maxsplit=1)[1])
+    except (AttributeError, IndexError, ValueError):
+        logger.warning("Invalid admin delete key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось удалить ключ", show_alert=True)
+        return
+
+    key = get_key_by_id(key_id)
+    if not key:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    await safe_edit_text(
+        callback.message,
+        "Удалить этот ключ?\n\n"
+        f"ID: {row_get(key, 'id', '—')}\n"
+        f"Пользователь: {row_get(key, 'telegram_id', '—')}\n"
+        f"Название: {row_get(key, 'key_name', 'VPN-ключ')}\n"
+        f"Действует до: {row_get(key, 'expires_at', '—')}",
+        reply_markup=get_admin_delete_key_confirm_menu(key_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_delete_key_confirm:"))
+async def admin_delete_key_confirm_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        key_id = int(callback.data.split(":", maxsplit=1)[1])
+    except (AttributeError, IndexError, ValueError):
+        logger.warning("Invalid admin delete key confirm callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось удалить ключ", show_alert=True)
+        return
+
+    key = get_key_by_id(key_id)
+    if not key:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    telegram_id = row_get(key, "telegram_id")
+    try:
+        success, message = await delete_key_completely(key_id)
+    except Exception:
+        logger.exception("Failed to delete key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
+        await callback.answer("Не удалось удалить ключ", show_alert=True)
+        return
+
+    if not success:
+        logger.warning(
+            "Admin key deletion rejected: admin_id=%s key_id=%s message=%s",
+            callback.from_user.id,
+            key_id,
+            message,
+        )
+        await callback.answer(message or "Не удалось удалить ключ", show_alert=True)
+        return
+
+    user = get_user(telegram_id)
+    keys = get_user_keys(telegram_id)
+    await safe_edit_text(
+        callback.message,
+        build_admin_user_keys_text(user, keys),
+        reply_markup=get_admin_user_keys_menu(keys),
+    )
+    await callback.answer("Ключ удалён ✅", show_alert=True)
+
+
 @router.callback_query(F.data == "admin_settings")
 async def admin_settings_handler(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -239,7 +494,7 @@ async def admin_close_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    WAITING_SEARCH_ADMINS.discard(callback.from_user.id)
+    clear_admin_waiting_state(callback.from_user.id)
     try:
         await callback.message.delete()
     except Exception:

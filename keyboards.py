@@ -148,6 +148,7 @@ admin_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin_dashboard")],
         [InlineKeyboardButton(text="💰 Ожидающие оплаты", callback_data="admin_payments")],
+        [InlineKeyboardButton(text="🔑 Управление ключами", callback_data="admin_keys")],
         [InlineKeyboardButton(text="🔍 Поиск пользователей", callback_data="admin_search")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
@@ -156,7 +157,7 @@ admin_menu = InlineKeyboardMarkup(
 
 admin_back_menu = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")],
+        [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="admin_menu")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
     ]
 )
@@ -170,7 +171,7 @@ def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=f"✅ Подтвердить {payment['order_id']}",
+                        text="✅ Подтвердить оплату",
                         callback_data=f"approve_manual_payment:{payment['order_id']}",
                     )
                 ]
@@ -178,3 +179,28 @@ def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
 
     rows.extend(admin_back_menu.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_admin_user_keys_menu(keys) -> InlineKeyboardMarkup:
+    rows = []
+
+    for key in keys:
+        key_id = key["id"]
+        rows.extend(
+            [
+                [InlineKeyboardButton(text="📅 Продлить на 30 дней", callback_data=f"admin_extend_key:{key_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить ключ", callback_data=f"admin_delete_key:{key_id}")],
+            ]
+        )
+
+    rows.extend(admin_back_menu.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_admin_delete_key_confirm_menu(key_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"admin_delete_key_confirm:{key_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_key:{key_id}")],
+        ]
+    )
