@@ -17,7 +17,7 @@ async def trial_period_handler(callback: CallbackQuery):
     await safe_edit_text(
         callback.message,
         "🎁 Попробовать бесплатно\n\n"
-        "1 день бесплатно для проверки VPN.\n\n"
+        "7 дней бесплатно для проверки VPN.\n\n"
         "Нажми кнопку ниже, чтобы получить доступ.",
         reply_markup=trial_menu
     )

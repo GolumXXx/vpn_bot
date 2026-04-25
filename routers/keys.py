@@ -1,11 +1,13 @@
 import logging
 import os
+from io import BytesIO
 from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
+import qrcode
 
 from database.db import (
     delete_key_completely,
@@ -15,6 +17,7 @@ from database.db import (
     get_user_keys,
     is_key_active,
     parse_datetime,
+    update_key_device_type,
 )
 from services.short_links import resolve_vless_link
 
@@ -53,9 +56,16 @@ BACK_TO_MAIN_KEYBOARD = InlineKeyboardMarkup(
 
 DEVICE_TITLES = {
     "android": "🤖 Android",
-    "ios": "🍎 iPhone",
-    "mac": "💻 Mac",
+    "ios": "📱 iPhone",
+    "mac": "🍎 Mac",
     "windows": "🪟 Windows",
+}
+
+DEVICE_EMOJIS = {
+    "ios": "🍏",
+    "android": "🤖",
+    "windows": "🪟",
+    "mac": "🍎",
 }
 
 DEVICE_CONFIGS = {
@@ -114,6 +124,24 @@ def row_get(row, field, default=None):
         return default
 
     return value if value is not None else default
+
+
+def first_row_value(row, fields, default=None):
+    for field in fields:
+        value = row_get(row, field)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def parse_int_value(value) -> int | None:
+    if value in (None, ""):
+        return None
+
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def is_subscription_active(key) -> bool:
@@ -199,17 +227,98 @@ def format_time_left(key) -> str:
 
     diff = expires_at - datetime.now()
     if diff.total_seconds() <= 0:
-        return "время вышло"
+        return "срок истёк"
 
     days = diff.days
     hours = diff.seconds // 3600
     minutes = (diff.seconds % 3600) // 60
 
     if days > 0:
-        return f"{days} д. {hours} ч."
-    if hours > 0:
-        return f"{hours} ч. {minutes} мин."
-    return f"{minutes} мин."
+        return f"{days} дней {hours} часов"
+    return f"{hours} часов {minutes} минут"
+
+
+def build_qr_file(vpn_link: str) -> BufferedInputFile:
+    image = qrcode.make(vpn_link)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return BufferedInputFile(buffer.getvalue(), filename="vpn_qr.png")
+
+
+def get_device_emoji(key) -> str:
+    device_type = row_get(key, "device_type")
+    if not device_type:
+        return "📱"
+
+    return DEVICE_EMOJIS.get(str(device_type).lower(), "📱")
+
+
+def get_device_limit(key) -> int:
+    raw_limit = first_row_value(key, ("device_limit", "limitIp", "limit_ip"))
+    limit = parse_int_value(raw_limit)
+    if limit and limit > 0:
+        return limit
+    return 1
+
+
+def get_last_online_value(key) -> int | None:
+    return parse_int_value(first_row_value(key, ("lastOnline", "last_online")))
+
+
+def format_last_online_text(key) -> str:
+    last_online = get_last_online_value(key)
+    if not last_online or last_online <= 0:
+        return "нет данных"
+
+    if last_online > 10_000_000_000:
+        last_online = last_online // 1000
+
+    try:
+        return datetime.fromtimestamp(last_online).strftime("%d.%m.%Y %H:%M")
+    except (OSError, OverflowError, ValueError):
+        return "нет данных"
+
+
+def get_used_devices_count(key) -> int:
+    last_online = get_last_online_value(key)
+    return 1 if last_online and last_online > 0 else 0
+
+
+def format_bytes(value) -> str:
+    byte_count = parse_int_value(value)
+    if not byte_count or byte_count <= 0:
+        return "0 MB"
+
+    mb = byte_count / (1024 * 1024)
+    if mb < 1024:
+        return f"{mb:.1f} MB" if mb < 10 else f"{mb:.0f} MB"
+
+    gb = mb / 1024
+    return f"{gb:.1f} GB" if gb < 10 else f"{gb:.0f} GB"
+
+
+def format_traffic_text(key) -> str:
+    traffic_used = parse_int_value(row_get(key, "traffic_used"))
+    if traffic_used is not None:
+        return format_bytes(traffic_used)
+
+    up = parse_int_value(row_get(key, "up")) or 0
+    down = parse_int_value(row_get(key, "down")) or 0
+    if up or down:
+        return format_bytes(up + down)
+
+    total = first_row_value(key, ("traffic", "total", "used_traffic"))
+    return format_bytes(total)
+
+
+def build_device_status_text(key) -> str:
+    return (
+        f"📱 Устройства {get_device_emoji(key)}\n\n"
+        f"Доступно: {get_device_limit(key)}\n"
+        f"Используется: {get_used_devices_count(key)}\n\n"
+        f"🕒 Последняя активность: {format_last_online_text(key)}\n"
+        f"📊 Трафик: {format_traffic_text(key)}"
+    )
 
 
 def get_subscription_keyboard(key=None):
@@ -225,6 +334,23 @@ def get_subscription_keyboard(key=None):
                 )
             ]
         )
+        if is_subscription_active(key):
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="📷 QR-код",
+                        callback_data=f"qr_key_{key_id}",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="➕ Добавить устройство (платно)",
+                        callback_data="add_device_soon",
+                    )
+                ]
+            )
     else:
         rows.append(
             [
@@ -253,12 +379,12 @@ def get_device_select_keyboard(key):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="iPhone", callback_data=f"device_ios:{key_id}"),
-                InlineKeyboardButton(text="Android", callback_data=f"device_android:{key_id}"),
+                InlineKeyboardButton(text="📱 iPhone", callback_data=f"device_ios:{key_id}"),
+                InlineKeyboardButton(text="🤖 Android", callback_data=f"device_android:{key_id}"),
             ],
             [
-                InlineKeyboardButton(text="Windows", callback_data=f"device_windows:{key_id}"),
-                InlineKeyboardButton(text="Mac", callback_data=f"device_mac:{key_id}"),
+                InlineKeyboardButton(text="🪟 Windows", callback_data=f"device_windows:{key_id}"),
+                InlineKeyboardButton(text="🍎 Mac", callback_data=f"device_mac:{key_id}"),
             ],
             [
                 InlineKeyboardButton(text="⬅️ Назад", callback_data=f"view_key_{key_id}")
@@ -360,6 +486,8 @@ def build_subscription_text(key, user=None) -> str:
             f"{status_text}\n\n"
             f"Логин: {login}\n"
             f"Действует до: {expires_text}\n\n"
+            f"Осталось: {format_time_left(key)}\n\n"
+            f"{build_device_status_text(key)}\n\n"
             "Нажми кнопку ниже, чтобы подключиться"
         )
 
@@ -367,6 +495,8 @@ def build_subscription_text(key, user=None) -> str:
         f"{status_text}\n\n"
         f"Логин: {login}\n"
         f"Действовала до: {expires_text}\n\n"
+        f"Осталось: {format_time_left(key)}\n\n"
+        f"{build_device_status_text(key)}\n\n"
         "Продли доступ, чтобы снова пользоваться VPN"
     )
 
@@ -621,11 +751,46 @@ async def connect_key_handler(callback: CallbackQuery):
 
     await safe_edit_text(
         callback,
-        "📱 Подключение VPN\n\n"
+        "📲 Подключение VPN\n\n"
         "Выбери устройство:",
         reply_markup=get_device_select_keyboard(key),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("qr_key_"))
+async def qr_key_handler(callback: CallbackQuery):
+    key_id = parse_callback_int(callback.data, "qr_key_")
+    if key_id is None:
+        logger.warning("Invalid qr_key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    key, error = get_owned_key(key_id, callback.from_user.id)
+    if error:
+        await callback.answer(error, show_alert=True)
+        return
+
+    connect_error = validate_connectable_key(key)
+    if connect_error:
+        await callback.answer(connect_error, show_alert=True)
+        return
+
+    vless_key = get_raw_vless_key(key)
+    if not vless_key:
+        await callback.answer(VPN_KEY_ERROR_TEXT, show_alert=True)
+        return
+
+    await callback.message.answer_photo(
+        photo=build_qr_file(vless_key),
+        caption="📷 QR-код для подключения VPN",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_device_soon")
+async def add_device_soon_handler(callback: CallbackQuery):
+    await callback.answer("Добавление устройств скоро будет доступно", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("device_"))
@@ -653,6 +818,28 @@ async def device_handler(callback: CallbackQuery):
     connect_error = validate_connectable_key(key)
     if connect_error:
         await callback.answer(connect_error, show_alert=True)
+        return
+
+    try:
+        device_saved = update_key_device_type(key_id, device_code)
+    except Exception:
+        logger.exception(
+            "Failed to save device type: user_id=%s key_id=%s device_type=%s",
+            callback.from_user.id,
+            key_id,
+            device_code,
+        )
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    if not device_saved:
+        logger.warning(
+            "Device type was not saved: user_id=%s key_id=%s device_type=%s",
+            callback.from_user.id,
+            key_id,
+            device_code,
+        )
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
 
     await safe_edit_text(

@@ -23,6 +23,7 @@ MANUAL_PAYMENT_STATUS_PROCESSING = "processing"
 MANUAL_PAYMENT_STATUS_APPROVED = "approved"
 MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
+VALID_DEVICE_TYPES = {"ios", "android", "windows", "mac"}
 
 
 @contextmanager
@@ -589,7 +590,7 @@ async def create_trial_key(telegram_id, username=None, first_name=None):
     return await _issue_key(
         telegram_id=telegram_id,
         key_name="trial",
-        duration_days=1,
+        duration_days=7,
         username=username,
         first_name=first_name,
         traffic_limit_gb=0,
@@ -636,6 +637,22 @@ def extend_key(key_id, duration_days):
     return new_expires_str
 
 
+def update_key_device_type(key_id, device_type):
+    if device_type not in VALID_DEVICE_TYPES:
+        return False
+
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE vpn_keys
+            SET device_type = ?
+            WHERE id = ?
+            """,
+            (device_type, key_id),
+        )
+        return cursor.rowcount > 0
+
+
 def init_db():
     with get_connection() as conn:
         conn.execute(
@@ -673,6 +690,7 @@ def init_db():
                 telegram_id INTEGER,
                 key_name TEXT,
                 key_value TEXT,
+                device_type TEXT,
                 is_trial INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 created_at TEXT,
@@ -686,6 +704,7 @@ def init_db():
             )
             """
         )
+        _add_column_if_missing(conn, "vpn_keys", "device_type", "TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS manual_payments (
