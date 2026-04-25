@@ -174,7 +174,15 @@ admin_back_menu = InlineKeyboardMarkup(
 admin_logs_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_logs")],
+        [InlineKeyboardButton(text="🗑 Очистить логи", callback_data="admin_logs_clear")],
         [InlineKeyboardButton(text="⬅️ Назад в админ-панель", callback_data="admin_menu")],
+    ]
+)
+
+admin_logs_clear_confirm_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="admin_logs_clear_confirm")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_logs")],
     ]
 )
 

@@ -10,6 +10,7 @@ from database.db import (
     MANUAL_PAYMENT_STATUS_PENDING,
     add_bot_log,
     cancel_pending_manual_payment,
+    clear_bot_logs,
     delete_key_completely,
     extend_key,
     get_admin_dashboard_stats,
@@ -27,6 +28,7 @@ from database.db import (
 )
 from keyboards import (
     admin_back_menu,
+    admin_logs_clear_confirm_menu,
     admin_logs_menu,
     admin_menu,
     get_admin_delete_key_confirm_menu,
@@ -325,6 +327,32 @@ async def admin_logs_handler(callback: CallbackQuery):
 
     clear_admin_waiting_state(callback.from_user.id)
     await render_admin_logs(callback)
+
+
+@router.callback_query(F.data == "admin_logs_clear")
+async def admin_logs_clear_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    clear_admin_waiting_state(callback.from_user.id)
+    await safe_edit_text(
+        callback.message,
+        "⚠️ Ты точно хочешь удалить ВСЕ логи?\n\n"
+        "Это действие нельзя отменить.",
+        reply_markup=admin_logs_clear_confirm_menu,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_logs_clear_confirm")
+async def admin_logs_clear_confirm_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    clear_bot_logs()
+    await render_admin_logs(callback, "🗑 Логи успешно очищены")
 
 
 @router.callback_query(F.data.startswith("admin_remind_payment:"))

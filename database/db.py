@@ -295,6 +295,10 @@ def get_latest_bot_logs(limit=20):
     )
 
 
+def clear_bot_logs():
+    _execute("DELETE FROM bot_logs")
+
+
 def create_manual_payment(telegram_id, tariff_code):
     now = _format_datetime(_now())
 
