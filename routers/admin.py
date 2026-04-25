@@ -7,16 +7,20 @@ from aiogram.types import CallbackQuery, Message
 
 from config import ADMIN_IDS
 from database.db import (
+    MANUAL_PAYMENT_STATUS_PENDING,
+    cancel_pending_manual_payment,
     delete_key_completely,
     extend_key,
     get_admin_dashboard_stats,
     get_key_by_id,
+    get_manual_payment_by_order_id,
     get_pending_manual_payments,
     get_user,
     get_user_by_username,
     get_user_keys,
     get_user_key_stats,
     is_key_active,
+    mark_manual_payment_reminded,
     parse_datetime,
 )
 from keyboards import (
@@ -237,13 +241,109 @@ async def admin_payments_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
+    await render_admin_payments(callback)
+
+
+async def render_admin_payments(callback: CallbackQuery, answer_text: str | None = None):
     payments = get_pending_manual_payments()
     await safe_edit_text(
         callback.message,
         build_pending_payments_text(payments),
         reply_markup=get_admin_pending_payments_menu(payments),
     )
-    await callback.answer()
+    if answer_text:
+        await callback.answer(answer_text, show_alert=True)
+    else:
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_remind_payment:"))
+async def admin_remind_payment_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        order_id = callback.data.split(":", maxsplit=1)[1].strip()
+    except (AttributeError, IndexError):
+        logger.warning("Invalid admin remind payment callback: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось отправить напоминание", show_alert=True)
+        return
+
+    payment = get_manual_payment_by_order_id(order_id)
+    if not payment:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if row_get(payment, "status") != MANUAL_PAYMENT_STATUS_PENDING:
+        await callback.answer("Заявка уже не ждёт чек", show_alert=True)
+        return
+
+    if not mark_manual_payment_reminded(order_id):
+        await callback.answer("Напоминание уже отправлялось", show_alert=True)
+        return
+
+    try:
+        await callback.bot.send_message(
+            chat_id=row_get(payment, "telegram_id"),
+            text=(
+                f"⏳ Мы ждём чек по заявке {order_id}. "
+                "Если оплатил — отправь фото чека в этот чат."
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send manual payment reminder: order_id=%s admin_id=%s user_id=%s",
+            order_id,
+            callback.from_user.id,
+            row_get(payment, "telegram_id"),
+        )
+        await callback.answer("Не удалось отправить напоминание", show_alert=True)
+        return
+
+    await callback.answer("Напоминание отправлено", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_cancel_payment:"))
+async def admin_cancel_payment_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        order_id = callback.data.split(":", maxsplit=1)[1].strip()
+    except (AttributeError, IndexError):
+        logger.warning("Invalid admin cancel payment callback: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось отменить заявку", show_alert=True)
+        return
+
+    payment = get_manual_payment_by_order_id(order_id)
+    if not payment:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if row_get(payment, "status") != MANUAL_PAYMENT_STATUS_PENDING:
+        await callback.answer("Заявка уже не ждёт чек", show_alert=True)
+        return
+
+    if not cancel_pending_manual_payment(order_id):
+        await callback.answer("Не удалось отменить заявку", show_alert=True)
+        return
+
+    try:
+        await callback.bot.send_message(
+            chat_id=row_get(payment, "telegram_id"),
+            text="❌ Заявка отменена. Если нужна помощь — напиши в поддержку.",
+        )
+    except Exception:
+        logger.exception(
+            "Failed to notify user about cancelled manual payment: order_id=%s admin_id=%s user_id=%s",
+            order_id,
+            callback.from_user.id,
+            row_get(payment, "telegram_id"),
+        )
+
+    await render_admin_payments(callback, "Заявка отменена")
 
 
 async def render_admin_user_keys(callback: CallbackQuery, telegram_id: int):

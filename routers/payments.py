@@ -12,6 +12,7 @@ from config import (
 )
 from database.db import (
     MANUAL_PAYMENT_STATUS_APPROVED,
+    MANUAL_PAYMENT_STATUS_CANCELLED,
     MANUAL_PAYMENT_STATUS_PENDING,
     MANUAL_PAYMENT_STATUS_PROCESSING,
     MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
@@ -19,6 +20,7 @@ from database.db import (
     MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
     add_or_update_user,
     attach_manual_payment_receipt,
+    cancel_pending_manual_payment,
     create_manual_payment,
     create_paid_key,
     extend_key,
@@ -138,16 +140,14 @@ def build_manual_payment_text(payment, tariff: dict, payment_url: str | None = N
         lines.extend(
             [
                 "1. Нажми кнопку ниже и оплати через Ozon",
-                "2. Отправь чек в этот чат",
-                "3. Нажми «✅ Я оплатил»",
+                "2. После оплаты отправь чек в этот чат",
             ]
         )
     else:
         lines.extend(
             [
                 "1. Оплати доступ",
-                "2. Отправь чек в этот чат",
-                "3. Нажми «✅ Я оплатил»",
+                "2. После оплаты отправь чек в этот чат",
             ]
         )
 
@@ -166,7 +166,7 @@ def build_manual_payment_waiting_text(payment, tariff: dict) -> str:
 def build_receipt_received_text() -> str:
     return (
         "✅ Чек получен\n\n"
-        "Теперь нажми «✅ Я оплатил»"
+        "Заявка отправлена на проверку"
     )
 
 
@@ -182,7 +182,7 @@ def build_admin_receipt_text(payment, tariff: dict, user) -> str:
         f"Пользователь ID: {row_get(payment, 'telegram_id', '—')}\n"
         f"Логин: {username_text}\n"
         f"Имя: {first_name}\n\n"
-        "Пользователь нажал «Я оплатил»."
+        "Пользователь отправил чек."
     )
 
 
@@ -222,13 +222,15 @@ def get_manual_payment_status_alert(status: str | None) -> str:
     if status == MANUAL_PAYMENT_STATUS_PENDING:
         return "Чек ещё не получен"
     if status == MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
-        return "Пользователь ещё не нажал «✅ Я оплатил»"
+        return "Чек получен, заявка ещё не отправлена админу"
     if status == MANUAL_PAYMENT_STATUS_PROCESSING:
         return "Эта заявка уже обрабатывается"
     if status == MANUAL_PAYMENT_STATUS_APPROVED:
         return "Оплата уже подтверждена"
     if status == MANUAL_PAYMENT_STATUS_REPLACED:
         return "Заявка уже заменена новой"
+    if status == MANUAL_PAYMENT_STATUS_CANCELLED:
+        return "Заявка отменена"
     return "Заявка недоступна"
 
 
@@ -238,13 +240,15 @@ def get_user_manual_payment_status_alert(status: str | None) -> str:
     if status == MANUAL_PAYMENT_STATUS_WAITING_ADMIN:
         return "⏳ Заявка уже отправлена на проверку"
     if status == MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED:
-        return "Теперь нажми «✅ Я оплатил»"
+        return "✅ Чек получен. Заявка отправляется на проверку"
     if status == MANUAL_PAYMENT_STATUS_PROCESSING:
         return "Оплата уже проверяется"
     if status == MANUAL_PAYMENT_STATUS_APPROVED:
         return "Оплата уже подтверждена ✅"
     if status == MANUAL_PAYMENT_STATUS_REPLACED:
         return "Заявка уже заменена новой"
+    if status == MANUAL_PAYMENT_STATUS_CANCELLED:
+        return "❌ Заявка отменена"
     return "Заявка недоступна"
 
 
@@ -436,6 +440,37 @@ async def process_payment(callback: CallbackQuery):
         await callback.message.answer(GENERIC_ERROR_TEXT)
 
 
+@router.callback_query(F.data.startswith("cancel_manual_payment:"))
+async def cancel_manual_payment_handler(callback: CallbackQuery):
+    try:
+        order_id = callback.data.split(":", maxsplit=1)[1].strip()
+    except (AttributeError, IndexError):
+        logger.warning(
+            "Invalid manual payment cancel callback: data=%s user_id=%s",
+            callback.data,
+            callback.from_user.id,
+        )
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    payment = get_manual_payment_by_order_id(order_id)
+    if not payment or row_get(payment, "telegram_id") != callback.from_user.id:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if row_get(payment, "status") != MANUAL_PAYMENT_STATUS_PENDING:
+        await callback.answer(get_user_manual_payment_status_alert(row_get(payment, "status")), show_alert=True)
+        return
+
+    if not cancel_pending_manual_payment(order_id):
+        payment = get_manual_payment_by_order_id(order_id)
+        await callback.answer(get_user_manual_payment_status_alert(row_get(payment, "status")), show_alert=True)
+        return
+
+    await safe_edit_text(callback.message, "❌ Заявка отменена")
+    await callback.answer("Заявка отменена")
+
+
 @router.callback_query(F.data.startswith("manual_payment_paid:"))
 async def manual_payment_paid_handler(callback: CallbackQuery):
     try:
@@ -542,11 +577,33 @@ async def receipt_photo_handler(message: Message):
             receipt_unique_id=photo.file_unique_id,
             user_message_id=message.message_id,
         )
+
+        if not mark_manual_payment_waiting_admin(order_id, user_message_id=message.message_id):
+            payment = get_manual_payment_by_order_id(order_id)
+            await message.answer(get_user_manual_payment_status_alert(row_get(payment, "status")))
+            return
+
+        payment = get_manual_payment_by_order_id(order_id)
+        delivered_to = await send_receipt_to_admins(
+            message.bot,
+            message.from_user,
+            payment,
+            tariff,
+        )
+        if delivered_to == 0:
+            reset_manual_payment_waiting_admin(order_id)
+            await message.answer(
+                "✅ Чек получен\n\n"
+                "Не удалось отправить заявку админу. Попробуй ещё раз позже."
+            )
+            return
+
         logger.info(
-            "Received manual payment receipt: order_id=%s user_id=%s tariff=%s",
+            "Received manual payment receipt and sent to admins: order_id=%s user_id=%s tariff=%s admins=%s",
             order_id,
             message.from_user.id,
             tariff_code,
+            delivered_to,
         )
 
         await message.answer(build_receipt_received_text())

@@ -107,12 +107,8 @@ def get_manual_payment_request_menu(order_id: str, payment_url: str | None = Non
     if payment_url:
         rows.append([InlineKeyboardButton(text="💸 Оплатить через Ozon", url=payment_url)])
 
-    rows.extend(
-        [
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"manual_payment_paid:{order_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")],
-        ]
-    )
+    rows.append([InlineKeyboardButton(text="❌ Отменить заявку", callback_data=f"cancel_manual_payment:{order_id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -176,6 +172,24 @@ def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
                         text="✅ Подтвердить оплату",
                         callback_data=f"approve_manual_payment:{payment['order_id']}",
                     )
+                ]
+            )
+
+        if payment["status"] == "pending_receipt":
+            rows.extend(
+                [
+                    [
+                        InlineKeyboardButton(
+                            text="✉️ Напомнить о чеке",
+                            callback_data=f"admin_remind_payment:{payment['order_id']}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="❌ Отменить заявку",
+                            callback_data=f"admin_cancel_payment:{payment['order_id']}",
+                        )
+                    ],
                 ]
             )
 

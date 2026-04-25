@@ -22,6 +22,7 @@ MANUAL_PAYMENT_STATUS_WAITING_ADMIN = "waiting_admin_confirmation"
 MANUAL_PAYMENT_STATUS_PROCESSING = "processing"
 MANUAL_PAYMENT_STATUS_APPROVED = "approved"
 MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
+MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
 
 
 @contextmanager
@@ -52,6 +53,18 @@ def _fetchall(query, params=()):
 def _execute(query, params=()):
     with get_connection() as conn:
         conn.execute(query, params)
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    return {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
+def _add_column_if_missing(conn, table_name: str, column_name: str, column_definition: str):
+    if column_name not in _table_columns(conn, table_name):
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
 
 def _now():
@@ -369,6 +382,51 @@ def reset_manual_payment_waiting_admin(order_id):
     )
 
 
+def cancel_pending_manual_payment(order_id):
+    now = _format_datetime(_now())
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE manual_payments
+            SET status = ?,
+                cancelled_at = ?,
+                updated_at = ?
+            WHERE order_id = ?
+              AND status = ?
+            """,
+            (
+                MANUAL_PAYMENT_STATUS_CANCELLED,
+                now,
+                now,
+                order_id,
+                MANUAL_PAYMENT_STATUS_PENDING,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
+def mark_manual_payment_reminded(order_id):
+    now = _format_datetime(_now())
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE manual_payments
+            SET manual_reminded_at = ?,
+                updated_at = ?
+            WHERE order_id = ?
+              AND status = ?
+              AND manual_reminded_at IS NULL
+            """,
+            (
+                now,
+                now,
+                order_id,
+                MANUAL_PAYMENT_STATUS_PENDING,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
 def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=None, user_message_id=None):
     now = _format_datetime(_now())
     _execute(
@@ -641,12 +699,16 @@ def init_db():
                 user_message_id INTEGER,
                 approved_by INTEGER,
                 approved_at TEXT,
+                manual_reminded_at TEXT,
+                cancelled_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
         init_short_links_schema(conn)
+        _add_column_if_missing(conn, "manual_payments", "manual_reminded_at", "TEXT")
+        _add_column_if_missing(conn, "manual_payments", "cancelled_at", "TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS link_clicks (
