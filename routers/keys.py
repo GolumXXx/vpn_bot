@@ -1,9 +1,10 @@
+import asyncio
 import logging
 import os
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
@@ -12,10 +13,13 @@ import qrcode
 from database.db import (
     delete_key_completely,
     extend_key,
+    get_active_keys_for_reminders,
     get_key_by_id,
     get_user,
     get_user_keys,
     is_key_active,
+    mark_key_notified_1_day,
+    mark_key_notified_expired,
     parse_datetime,
     update_key_device_type,
 )
@@ -45,6 +49,27 @@ GENERIC_ERROR_TEXT = (
 
 VPN_KEY_ERROR_TEXT = (
     "Не удалось получить корректный VPN-ключ. Попробуй пересоздать ключ."
+)
+
+REMINDER_INTERVAL_SECONDS = 10 * 60
+ONE_DAY_REMINDER_TEXT = (
+    "⚠️ Твой VPN скоро закончится\n\n"
+    "Остался 1 день доступа.\n"
+    "Продли сейчас, чтобы не потерять соединение."
+)
+EXPIRED_REMINDER_TEXT = (
+    "❌ VPN закончился\n\n"
+    "Чтобы снова пользоваться интернетом без ограничений — продли доступ 👇"
+)
+RENEW_REMINDER_KEYBOARD = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Продлить", callback_data="renew_sub")]
+    ]
+)
+BUY_REMINDER_KEYBOARD = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Купить VPN", callback_data="renew_sub")]
+    ]
 )
 
 BACK_TO_MAIN_KEYBOARD = InlineKeyboardMarkup(
@@ -246,6 +271,71 @@ def build_qr_file(vpn_link: str) -> BufferedInputFile:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return BufferedInputFile(buffer.getvalue(), filename="vpn_qr.png")
+
+
+async def send_key_reminder(bot: Bot, key, text: str, reply_markup: InlineKeyboardMarkup) -> bool:
+    telegram_id = row_get(key, "telegram_id")
+    if not telegram_id:
+        return False
+
+    try:
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "Failed to send VPN expiration reminder: user_id=%s key_id=%s",
+            telegram_id,
+            row_get(key, "id"),
+        )
+        return False
+
+
+async def process_expiration_reminders(bot: Bot):
+    now = datetime.now()
+
+    for key in get_active_keys_for_reminders():
+        key_id = row_get(key, "id")
+        expires_at = parse_datetime(row_get(key, "expires_at"))
+        if not key_id or not expires_at:
+            continue
+
+        if expires_at <= now:
+            if row_get(key, "notified_expired", 0):
+                continue
+
+            sent = await send_key_reminder(
+                bot,
+                key,
+                EXPIRED_REMINDER_TEXT,
+                BUY_REMINDER_KEYBOARD,
+            )
+            if sent:
+                mark_key_notified_expired(key_id)
+            continue
+
+        if expires_at - now <= timedelta(days=1) and not row_get(key, "notified_1_day", 0):
+            sent = await send_key_reminder(
+                bot,
+                key,
+                ONE_DAY_REMINDER_TEXT,
+                RENEW_REMINDER_KEYBOARD,
+            )
+            if sent:
+                mark_key_notified_1_day(key_id)
+
+
+async def reminder_loop(bot: Bot):
+    while True:
+        try:
+            await process_expiration_reminders(bot)
+        except Exception:
+            logger.exception("VPN expiration reminder loop failed")
+
+        await asyncio.sleep(REMINDER_INTERVAL_SECONDS)
 
 
 def get_device_emoji(key) -> str:

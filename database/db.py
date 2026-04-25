@@ -627,7 +627,9 @@ def extend_key(key_id, duration_days):
         """
         UPDATE vpn_keys
         SET expires_at = ?,
-            is_active = 1
+            is_active = 1,
+            notified_1_day = 0,
+            notified_expired = 0
         WHERE id = ?
         """,
         (new_expires_str, key_id),
@@ -650,6 +652,46 @@ def update_key_device_type(key_id, device_type):
             (device_type, key_id),
         )
         return cursor.rowcount > 0
+
+
+def get_active_keys_for_reminders():
+    return _fetchall(
+        """
+        SELECT *
+        FROM vpn_keys
+        WHERE is_active = 1
+          AND expires_at IS NOT NULL
+          AND expires_at != ''
+          AND (
+              COALESCE(notified_1_day, 0) = 0
+              OR COALESCE(notified_expired, 0) = 0
+          )
+        ORDER BY expires_at ASC
+        """
+    )
+
+
+def mark_key_notified_1_day(key_id):
+    _execute(
+        """
+        UPDATE vpn_keys
+        SET notified_1_day = 1
+        WHERE id = ?
+        """,
+        (key_id,),
+    )
+
+
+def mark_key_notified_expired(key_id):
+    _execute(
+        """
+        UPDATE vpn_keys
+        SET notified_expired = 1,
+            notified_1_day = 1
+        WHERE id = ?
+        """,
+        (key_id,),
+    )
 
 
 def init_db():
@@ -699,11 +741,15 @@ def init_db():
                 panel_email TEXT,
                 client_uuid TEXT,
                 traffic_limit INTEGER DEFAULT 0,
-                traffic_used INTEGER DEFAULT 0
+                traffic_used INTEGER DEFAULT 0,
+                notified_1_day INTEGER DEFAULT 0,
+                notified_expired INTEGER DEFAULT 0
             )
             """
         )
         _add_column_if_missing(conn, "vpn_keys", "device_type", "TEXT")
+        _add_column_if_missing(conn, "vpn_keys", "notified_1_day", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "vpn_keys", "notified_expired", "INTEGER DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS manual_payments (

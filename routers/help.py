@@ -13,7 +13,12 @@ async def help_handler(callback: CallbackQuery):
         callback.message,
         "🛟 Поддержка\n\n"
         "Если что-то не получается, напиши в поддержку.\n\n"
-        "Мы поможем с подключением и оплатой.",
+        "Мы поможем с подключением и оплатой.\n\n"
+        "📄 Документы\n\n"
+        "Пользовательское соглашение:\n"
+        "https://telegra.ph/Polzovatelskoe-soglashenie-04-25-43\n\n"
+        "Политика конфиденциальности:\n"
+        "https://telegra.ph/Politika-konfidencialnosti-04-25-30",
         reply_markup=help_menu
     )
     await callback.answer()

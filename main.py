@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
 
@@ -9,7 +10,7 @@ from routers.start import router as start_router
 from routers.trial import router as trial_router
 from routers.payments import router as payments_router
 from routers.help import router as help_router
-from routers.keys import router as keys_router
+from routers.keys import router as keys_router, reminder_loop as keys_reminder_loop
 from routers.invite import router as invite_router
 from routers.services import router as services_router
 from routers.admin import router as admin_router
@@ -39,13 +40,23 @@ for router in (
     dp.include_router(router)
 
 
+async def reminder_loop():
+    await keys_reminder_loop(bot)
+
+
 async def main():
     logger.info("Starting VPN bot")
     init_db()
     logger.info("Database initialized")
+    reminder_task = asyncio.create_task(reminder_loop())
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Webhook cleared, polling started")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        reminder_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reminder_task
 
 
 if __name__ == "__main__":

@@ -61,6 +61,18 @@ renew_menu = InlineKeyboardMarkup(
 help_menu = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="💬 Написать в поддержку", url=_build_support_url())],
+        [
+            InlineKeyboardButton(
+                text="📜 Пользовательское соглашение",
+                url="https://telegra.ph/Polzovatelskoe-soglashenie-04-25-43",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📄 Политика конфиденциальности",
+                url="https://telegra.ph/Politika-konfidencialnosti-04-25-30",
+            )
+        ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_main")]
     ]
 )
