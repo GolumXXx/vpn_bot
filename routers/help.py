@@ -14,7 +14,7 @@ async def help_handler(callback: CallbackQuery):
         "🛟 Поддержка\n\n"
         "Если что-то не получается, напиши в поддержку.\n\n"
         "Мы поможем с подключением и оплатой.\n\n"
-        "📄 Документы\n\n"
+        "📄 Документы\n\n",
         reply_markup=help_menu
     )
     await callback.answer()
