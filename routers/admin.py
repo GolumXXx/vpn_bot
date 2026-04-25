@@ -141,7 +141,7 @@ def format_key_status(key) -> str:
 def build_admin_keys_text() -> str:
     return (
         "🔑 Управление ключами\n\n"
-        "Отправь telegram_id пользователя."
+        "Отправь telegram_id пользователя, чтобы посмотреть его ключи."
     )
 
 
@@ -171,6 +171,9 @@ def build_admin_user_keys_text(user, keys) -> str:
                 f"Действует до: {row_get(key, 'expires_at', '—')}",
             ]
         )
+        panel_email = row_get(key, "panel_email")
+        if panel_email:
+            lines.append(f"Panel email: {panel_email}")
 
     return "\n".join(lines)
 
@@ -420,7 +423,7 @@ async def admin_search_message_handler(message: Message):
         query = message.text.strip()
         if not query.isdigit():
             await message.answer(
-                "Отправь telegram_id пользователя.",
+                "Отправь telegram_id пользователя, чтобы посмотреть его ключи.",
                 reply_markup=admin_back_menu,
             )
             return
@@ -557,7 +560,7 @@ async def admin_delete_key_handler(callback: CallbackQuery):
 
     await safe_edit_text(
         callback.message,
-        "Удалить этот ключ?\n\n"
+        "Вы точно хотите удалить этот ключ?\n\n"
         f"ID: {row_get(key, 'id', '—')}\n"
         f"Пользователь: {row_get(key, 'telegram_id', '—')}\n"
         f"Название: {row_get(key, 'key_name', 'VPN-ключ')}\n"

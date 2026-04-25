@@ -226,6 +226,6 @@ def get_admin_delete_key_confirm_menu(key_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"admin_delete_key_confirm:{key_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_key:{key_id}")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"admin_key:{key_id}")],
         ]
     )
