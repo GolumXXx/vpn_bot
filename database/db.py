@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from services.short_links import (
-    create_short_link,
     delete_short_link_by_url,
     init_short_links_schema,
 )
@@ -15,7 +14,6 @@ from services.xui_client import XUIClient, XUIError
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "bot.db"
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-SHORT_LINK_BASE_URL = "https://golum.shop"
 MANUAL_PAYMENT_STATUS_PENDING = "pending_receipt"
 MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED = "receipt_uploaded"
 MANUAL_PAYMENT_STATUS_WAITING_ADMIN = "waiting_admin_confirmation"
@@ -180,20 +178,21 @@ async def _issue_key(
             flow=flow,
         )
 
-        uri = await client.build_connection_uri(
+        vless_link = await client.build_connection_uri(
             inbound_id=inbound_id,
             email=email,
             client_uuid=result["uuid"],
             flow=flow,
         )
-        short_uri = create_short_link(uri, base_url=SHORT_LINK_BASE_URL)
+        if not vless_link or not vless_link.startswith("vless://"):
+            raise XUIError("Не удалось построить корректный VLESS-ключ")
 
         with get_connection() as conn:
             _insert_vpn_key(
                 conn=conn,
                 telegram_id=telegram_id,
                 key_name=key_name,
-                key_value=short_uri,
+                key_value=vless_link,
                 is_trial=int(is_trial),
                 server_id=server["id"],
                 inbound_id=inbound_id,
@@ -214,7 +213,7 @@ async def _issue_key(
                     (_format_datetime(_now()), telegram_id),
                 )
 
-        return short_uri
+        return vless_link
     finally:
         await client.close()
 

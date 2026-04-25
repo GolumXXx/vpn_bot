@@ -44,8 +44,7 @@ GENERIC_ERROR_TEXT = (
 )
 
 VPN_KEY_ERROR_TEXT = (
-    "Не удалось подготовить VPN-ключ.\n\n"
-    "Попробуй ещё раз позже или обратись в поддержку."
+    "Не удалось получить корректный VPN-ключ. Попробуй пересоздать ключ."
 )
 
 BACK_TO_MAIN_KEYBOARD = InlineKeyboardMarkup(
@@ -172,7 +171,11 @@ def get_raw_vless_key(key) -> str | None:
         logger.exception("Failed to resolve VPN key: key_id=%s", row_get(key, "id"))
         return None
 
-    if resolved_key and resolved_key.startswith("vless://"):
+    if not isinstance(resolved_key, str):
+        return None
+
+    resolved_key = resolved_key.strip()
+    if resolved_key.startswith("vless://"):
         return resolved_key
 
     return None
