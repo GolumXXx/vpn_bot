@@ -409,9 +409,7 @@ def build_device_status_text(key) -> str:
     return (
         f"📱 Устройства {get_device_emoji(key)}\n\n"
         f"Доступно: {get_device_limit(key)}\n"
-        f"Используется: {get_used_devices_count(key)}\n\n"
-        f"🕒 Последняя активность: {format_last_online_text(key)}\n"
-        f"📊 Трафик: {format_traffic_text(key)}"
+        f"Используется: {get_used_devices_count(key)}"
     )
 
 
@@ -434,6 +432,14 @@ def get_subscription_keyboard(key=None):
                     InlineKeyboardButton(
                         text="📷 QR-код",
                         callback_data=f"qr_key_{key_id}",
+                    )
+                ]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="📋 Скопировать ключ",
+                        callback_data=f"copy_key_{key_id}",
                     )
                 ]
             )
@@ -895,6 +901,30 @@ async def qr_key_handler(callback: CallbackQuery):
     await callback.message.answer_photo(
         photo=build_qr_file(vless_key),
         caption="📷 QR-код для подключения VPN",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("copy_key_"))
+async def copy_key_handler(callback: CallbackQuery):
+    key_id = parse_callback_int(callback.data, "copy_key_")
+    if key_id is None:
+        logger.warning("Invalid copy_key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    key, error = get_owned_key(key_id, callback.from_user.id)
+    if error:
+        await callback.answer(error, show_alert=True)
+        return
+
+    vless_key = get_raw_vless_key(key)
+    if not vless_key:
+        await callback.answer("Не удалось получить ключ", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "📋 Твой VPN-ключ:\n\n" + vless_key
     )
     await callback.answer()
 
