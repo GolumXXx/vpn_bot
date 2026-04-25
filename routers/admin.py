@@ -92,6 +92,14 @@ def format_price(payment) -> str:
     return f"{tariff['price']} ₽"
 
 
+def format_payment_status(payment) -> str:
+    status = row_get(payment, "status", "—")
+    if status == "pending_receipt":
+        return "⏳ Ожидаем чек"
+
+    return status
+
+
 def build_pending_payments_text(payments) -> str:
     if not payments:
         return "💰 Ожидающие оплаты\n\nНет ожидающих оплат ✅"
@@ -104,7 +112,7 @@ def build_pending_payments_text(payments) -> str:
                 f"Пользователь: {row_get(payment, 'telegram_id', '—')}",
                 f"Тариф: {format_tariff(payment)}",
                 f"Стоимость: {format_price(payment)}",
-                f"Статус: {row_get(payment, 'status', '—')}",
+                f"Статус: {format_payment_status(payment)}",
                 "",
             ]
         )
@@ -236,6 +244,38 @@ async def admin_payments_handler(callback: CallbackQuery):
         reply_markup=get_admin_pending_payments_menu(payments),
     )
     await callback.answer()
+
+
+async def render_admin_user_keys(callback: CallbackQuery, telegram_id: int):
+    user = get_user(telegram_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    keys = get_user_keys(telegram_id)
+    await safe_edit_text(
+        callback.message,
+        build_admin_user_keys_text(user, keys),
+        reply_markup=get_admin_user_keys_menu(keys),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_keys:"))
+async def admin_user_keys_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    try:
+        telegram_id = int(callback.data.split(":", maxsplit=1)[1])
+    except (AttributeError, IndexError, ValueError):
+        logger.warning("Invalid admin user keys callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer("Не удалось открыть пользователя", show_alert=True)
+        return
+
+    clear_admin_waiting_state(callback.from_user.id)
+    await render_admin_user_keys(callback, telegram_id)
 
 
 @router.callback_query(F.data == "admin_keys")

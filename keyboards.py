@@ -167,6 +167,8 @@ def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
     rows = []
 
     for payment in payments:
+        telegram_id = payment["telegram_id"]
+
         if payment["status"] == "waiting_admin_confirmation":
             rows.append(
                 [
@@ -176,6 +178,15 @@ def get_admin_pending_payments_menu(payments) -> InlineKeyboardMarkup:
                     )
                 ]
             )
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🔑 Открыть пользователя",
+                    callback_data=f"admin_user_keys:{telegram_id}",
+                )
+            ]
+        )
 
     rows.extend(admin_back_menu.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows)
