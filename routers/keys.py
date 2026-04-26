@@ -330,6 +330,8 @@ async def process_expiration_reminders(bot: Bot):
 
 
 async def reminder_loop(bot: Bot):
+    await asyncio.sleep(30)
+
     while True:
         try:
             await process_expiration_reminders(bot)
