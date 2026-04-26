@@ -601,26 +601,6 @@ def mark_manual_payment_approved(order_id, admin_id):
     )
 
 
-def has_used_trial(telegram_id):
-    row = _fetchone(
-        "SELECT used_trial FROM users WHERE telegram_id = ?",
-        (telegram_id,),
-    )
-    return bool(row["used_trial"]) if row else False
-
-
-def mark_trial_as_used(telegram_id):
-    _execute(
-        """
-        UPDATE users
-        SET used_trial = 1,
-            trial_activated_at = ?
-        WHERE telegram_id = ?
-        """,
-        (_format_datetime(_now()), telegram_id),
-    )
-
-
 def reserve_trial_usage(telegram_id) -> bool:
     with get_connection() as conn:
         cursor = conn.execute(
@@ -848,6 +828,14 @@ async def extend_key_with_panel(key_id, duration_days):
             (inbound_id, key_id),
         )
 
+    logger.info(
+        "Extended VPN key in panel and database: key_id=%s server_id=%s inbound_id=%s client_uuid_prefix=%s days=%s",
+        key_id,
+        server_id,
+        inbound_id,
+        client_uuid[:8],
+        duration_days,
+    )
     return update_key_expiry_in_db(key_id, new_expires)
 
 
@@ -1224,6 +1212,12 @@ async def delete_key_completely(key_id):
     client_uuid = key["client_uuid"]
 
     if not server_id or not client_uuid:
+        logger.warning(
+            "Deleting DB-only key without panel binding: key_id=%s server_id=%s client_uuid_present=%s",
+            key_id,
+            server_id,
+            bool(client_uuid),
+        )
         delete_key_from_db(key_id)
         return True, "Ключ удалён только из базы"
 
@@ -1249,8 +1243,22 @@ async def delete_key_completely(key_id):
             client_uuid=client_uuid,
         )
         delete_key_from_db(key_id)
+        logger.info(
+            "Deleted VPN key from panel and database: key_id=%s server_id=%s inbound_id=%s client_uuid_prefix=%s",
+            key_id,
+            server_id,
+            inbound_id,
+            client_uuid[:8],
+        )
         return True, "Ключ удалён с сервера и из базы"
     except Exception as error:
+        logger.exception(
+            "Failed to delete VPN key completely: key_id=%s server_id=%s inbound_id=%s client_uuid_prefix=%s",
+            key_id,
+            server_id,
+            inbound_id,
+            client_uuid[:8],
+        )
         return False, f"Ошибка удаления: {error}"
     finally:
         await client.close()

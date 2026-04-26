@@ -1,14 +1,14 @@
 import asyncio
 import logging
-import os
 from io import BytesIO
 from datetime import datetime, timedelta
+from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
-from dotenv import load_dotenv
 import qrcode
 
+from config import ADMIN_IDS
 from database.db import (
     add_bot_log,
     delete_key_completely,
@@ -29,21 +29,9 @@ from utils.rows import row_get
 from utils.telegram import safe_edit_text
 
 
-load_dotenv()
 router = Router()
 logger = logging.getLogger(__name__)
-
-
-def parse_admin_ids(raw_value: str) -> set[int]:
-    admin_ids = set()
-    for item in raw_value.split(","):
-        item = item.strip()
-        if item.isdigit():
-            admin_ids.add(int(item))
-    return admin_ids
-
-
-ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
+ADMIN_ID_SET = set(ADMIN_IDS)
 
 VPN_KEY_ERROR_TEXT = VPN_KEY_READ_ERROR_TEXT
 
@@ -207,17 +195,6 @@ def get_primary_subscription_key(keys):
         return max(active_keys, key=get_key_relevance_sort_value)
 
     return max(keys, key=get_key_relevance_sort_value)
-
-
-def format_key_status(key) -> str:
-    if is_subscription_active(key):
-        return "✅ активен"
-
-    expires_at = parse_datetime(row_get(key, "expires_at"))
-    if expires_at and expires_at <= datetime.now():
-        return "⏰ истёк"
-
-    return "❌ отключён"
 
 
 def format_time_left(key) -> str:
@@ -730,7 +707,7 @@ async def extend_key_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delete_key_confirm:"))
 async def delete_key_handler(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
+    if callback.from_user.id not in ADMIN_ID_SET:
         await callback.answer("Нет доступа", show_alert=True)
         return
 
@@ -778,7 +755,7 @@ async def delete_key_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delete_key:"))
 async def confirm_delete_key_handler(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
+    if callback.from_user.id not in ADMIN_ID_SET:
         await callback.answer("Нет доступа", show_alert=True)
         return
 
@@ -897,7 +874,9 @@ async def copy_key_handler(callback: CallbackQuery):
         return
 
     await callback.message.answer(
-        "📋 Твой VPN-ключ:\n\n" + vless_key
+        f"<code>{escape(vless_key)}</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
     await callback.answer()
 

@@ -3,7 +3,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
-from database.db import add_bot_log, add_or_update_user, has_used_trial, create_trial_key, get_user_keys
+from database.db import TrialAlreadyUsedError, add_bot_log, create_trial_key, get_user_keys
 from keyboards import trial_menu
 from routers.ui import safe_edit_text
 from services.xui_client import XUIError
@@ -28,18 +28,8 @@ async def trial_period_handler(callback: CallbackQuery):
 async def get_trial_handler(callback: CallbackQuery):
     user = callback.from_user
 
-    add_or_update_user(
-        telegram_id=user.id,
-        username=user.username,
-        first_name=user.first_name,
-    )
-
-    if has_used_trial(user.id):
-        await callback.answer("Пробный доступ уже использован", show_alert=True)
-        return
-
     try:
-        key = await create_trial_key(
+        await create_trial_key(
             telegram_id=user.id,
             username=user.username,
             first_name=user.first_name,
@@ -60,6 +50,9 @@ async def get_trial_handler(callback: CallbackQuery):
             "✅ Пробный доступ готов\n\n"
             "Открой «Мои VPN-ключи», чтобы подключиться."
         )
+
+    except TrialAlreadyUsedError:
+        await callback.answer("Пробный доступ уже использован", show_alert=True)
 
     except XUIError:
         logger.exception("XUI error during trial key creation: user_id=%s", user.id)

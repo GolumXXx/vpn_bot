@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -26,9 +25,7 @@ from database.db import (
     get_user_by_username,
     get_user_keys,
     get_user_key_stats,
-    is_key_active,
     mark_manual_payment_reminded,
-    parse_datetime,
 )
 from keyboards import (
     admin_back_menu,
@@ -43,6 +40,7 @@ from keyboards import (
 from routers.payments import TARIFFS
 from routers.ui import safe_edit_text
 from utils.rows import row_get
+from utils.subscriptions import format_key_status
 
 
 router = Router()
@@ -176,20 +174,6 @@ def build_admin_logs_text(logs) -> str:
     return "\n".join(lines)
 
 
-def format_key_status(key) -> str:
-    try:
-        if is_key_active(key):
-            return "активен"
-    except (IndexError, KeyError, TypeError, ValueError):
-        pass
-
-    expires_at = parse_datetime(row_get(key, "expires_at"))
-    if expires_at and expires_at <= datetime.now():
-        return "истёк"
-
-    return "неактивен"
-
-
 def build_admin_keys_text() -> str:
     return (
         "🔑 Управление ключами\n\n"
@@ -219,7 +203,7 @@ def build_admin_user_keys_text(user, keys) -> str:
                 "",
                 f"ID: {row_get(key, 'id', '—')}",
                 f"Название: {row_get(key, 'key_name', 'VPN-ключ')}",
-                f"Статус: {format_key_status(key)}",
+                f"Статус: {format_key_status(key, with_emoji=False)}",
                 f"Действует до: {row_get(key, 'expires_at', '—')}",
             ]
         )

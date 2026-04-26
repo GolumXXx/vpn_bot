@@ -1,3 +1,4 @@
+import asyncio
 import aiohttp
 import json
 import logging
@@ -30,7 +31,7 @@ class XUIClient:
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
-            connector = aiohttp.TCPConnector(ssl=False)
+            connector = aiohttp.TCPConnector()
             jar = aiohttp.CookieJar(unsafe=True)
             timeout = aiohttp.ClientTimeout(total=15)
 
@@ -43,6 +44,33 @@ class XUIClient:
             self._inbounds_cache = None
 
         return self.session
+
+    def _invalidate_auth(self):
+        self.is_authenticated = False
+        self._inbounds_cache = None
+        if self.session and not self.session.closed:
+            self.session.cookie_jar.clear()
+
+    @staticmethod
+    def _looks_like_html_response(text: str) -> bool:
+        stripped = text.lstrip().lower()
+        return stripped.startswith("<!doctype html") or stripped.startswith("<html")
+
+    @staticmethod
+    def _is_auth_error_message(message: str | None) -> bool:
+        if not message:
+            return False
+
+        normalized = str(message).strip().lower()
+        auth_markers = (
+            "login",
+            "not login",
+            "session",
+            "unauthorized",
+            "forbidden",
+            "expired",
+        )
+        return any(marker in normalized for marker in auth_markers)
 
     async def close(self):
         if self.session and not self.session.closed:
@@ -58,28 +86,51 @@ class XUIClient:
 
         login_url = f"{self.base_url}/login"
 
-        async with session.post(login_url, data=data) as response:
-            text = await response.text()
+        try:
+            async with session.post(login_url, data=data) as response:
+                text = await response.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+            logger.exception(
+                "Failed to connect to XUI panel during login: host=%s port=%s",
+                self.host,
+                self.port,
+            )
+            raise XUIError("Не удалось подключиться к панели 3x-ui") from error
 
-            if response.status != 200:
-                raise XUIError(f"Ошибка логина: HTTP {response.status}")
+        if response.status != 200:
+            logger.error(
+                "XUI login failed with HTTP status: host=%s port=%s status=%s",
+                self.host,
+                self.port,
+                response.status,
+            )
+            raise XUIError(f"Ошибка логина: HTTP {response.status}")
 
-            try:
-                result = json.loads(text)
-            except json.JSONDecodeError:
-                raise XUIError("Панель вернула не JSON при логине")
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError as error:
+            logger.error(
+                "XUI login returned non-JSON response: host=%s port=%s",
+                self.host,
+                self.port,
+            )
+            raise XUIError("Панель вернула не JSON при логине") from error
 
-            if result.get("success") is False:
-                raise XUIError(result.get("msg", "Не удалось войти в панель"))
+        if result.get("success") is False:
+            message = result.get("msg", "Не удалось войти в панель")
+            logger.error(
+                "XUI login was rejected: host=%s port=%s message=%s",
+                self.host,
+                self.port,
+                message,
+            )
+            raise XUIError(message)
 
-            self.is_authenticated = True
-            return True
+        self.is_authenticated = True
+        return True
 
     async def _request(self, method: str, endpoint: str, data: dict | None = None):
         session = await self._ensure_session()
-
-        if not self.is_authenticated and endpoint != "/login":
-            await self.login()
 
         url = f"{self.base_url}{endpoint}"
         headers = {
@@ -87,21 +138,77 @@ class XUIClient:
             "X-Requested-With": "XMLHttpRequest",
         }
 
-        async with session.request(method, url, json=data, headers=headers) as response:
-            text = await response.text()
+        for attempt in range(2):
+            if not self.is_authenticated and endpoint != "/login":
+                await self.login()
+
+            try:
+                async with session.request(method, url, json=data, headers=headers) as response:
+                    text = await response.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+                logger.exception(
+                    "XUI request failed because of network error: method=%s endpoint=%s host=%s port=%s",
+                    method,
+                    endpoint,
+                    self.host,
+                    self.port,
+                )
+                raise XUIError("Не удалось выполнить запрос к панели 3x-ui") from error
+
+            if response.status in (401, 403) and endpoint != "/login" and attempt == 0:
+                logger.warning(
+                    "XUI session looks expired, retrying login: method=%s endpoint=%s status=%s",
+                    method,
+                    endpoint,
+                    response.status,
+                )
+                self._invalidate_auth()
+                continue
 
             if response.status != 200:
+                logger.error(
+                    "XUI request failed with HTTP status: method=%s endpoint=%s status=%s",
+                    method,
+                    endpoint,
+                    response.status,
+                )
                 raise XUIError(f"HTTP {response.status}: {text[:200]}")
 
             try:
                 result = json.loads(text)
-            except json.JSONDecodeError:
-                raise XUIError("Панель вернула не JSON")
+            except json.JSONDecodeError as error:
+                if endpoint != "/login" and attempt == 0 and self._looks_like_html_response(text):
+                    logger.warning(
+                        "XUI returned HTML instead of JSON, retrying login: method=%s endpoint=%s",
+                        method,
+                        endpoint,
+                    )
+                    self._invalidate_auth()
+                    continue
+                raise XUIError("Панель вернула не JSON") from error
 
             if result.get("success") is False:
-                raise XUIError(result.get("msg", "Ошибка запроса к панели"))
+                message = result.get("msg", "Ошибка запроса к панели")
+                if endpoint != "/login" and attempt == 0 and self._is_auth_error_message(message):
+                    logger.warning(
+                        "XUI request was rejected because of auth state, retrying login: method=%s endpoint=%s message=%s",
+                        method,
+                        endpoint,
+                        message,
+                    )
+                    self._invalidate_auth()
+                    continue
+                logger.error(
+                    "XUI request was rejected: method=%s endpoint=%s message=%s",
+                    method,
+                    endpoint,
+                    message,
+                )
+                raise XUIError(message)
 
             return result
+
+        raise XUIError("Не удалось выполнить запрос к панели после повторного входа")
 
     async def get_inbounds(self):
         if self._inbounds_cache is not None:
@@ -530,9 +637,29 @@ class XUIClient:
             )
             raise
 
-        logger.info(
-            "Deleted XUI client: inbound_id=%s client_uuid_prefix=%s",
+        try:
+            await self.get_client_by_email_or_uuid(
+                inbound_id=inbound_id,
+                client_uuid=client_uuid,
+            )
+        except XUIError as error:
+            if str(error) == "Клиент не найден в inbound":
+                logger.info(
+                    "Deleted XUI client: inbound_id=%s client_uuid_prefix=%s",
+                    inbound_id,
+                    client_uuid[:8],
+                )
+                return True
+            logger.exception(
+                "Failed to verify XUI client deletion: inbound_id=%s client_uuid_prefix=%s",
+                inbound_id,
+                client_uuid[:8],
+            )
+            raise
+
+        logger.error(
+            "XUI client is still present after deletion: inbound_id=%s client_uuid_prefix=%s",
             inbound_id,
             client_uuid[:8],
         )
-        return True
+        raise XUIError("Панель не подтвердила удаление клиента")
