@@ -159,10 +159,18 @@ admin_menu = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin_dashboard")],
         [InlineKeyboardButton(text="💰 Ожидающие оплаты", callback_data="admin_payments")],
         [InlineKeyboardButton(text="🔑 Управление ключами", callback_data="admin_keys")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📜 Логи", callback_data="admin_logs")],
         [InlineKeyboardButton(text="🔍 Поиск пользователей", callback_data="admin_search")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="❌ Закрыть панель", callback_data="admin_close")],
+    ]
+)
+
+admin_broadcast_confirm_menu = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да", callback_data="admin_broadcast_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_panel")],
     ]
 )
 

@@ -1,8 +1,11 @@
+import asyncio
 import logging
 from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from config import ADMIN_IDS
@@ -14,6 +17,7 @@ from database.db import (
     delete_key_completely,
     extend_key,
     get_admin_dashboard_stats,
+    get_connection,
     get_key_by_id,
     get_latest_bot_logs,
     get_manual_payment_by_order_id,
@@ -28,6 +32,7 @@ from database.db import (
 )
 from keyboards import (
     admin_back_menu,
+    admin_broadcast_confirm_menu,
     admin_logs_clear_confirm_menu,
     admin_logs_menu,
     admin_menu,
@@ -51,6 +56,10 @@ ADMIN_MENU_TEXT = (
 )
 
 
+class BroadcastState(StatesGroup):
+    waiting_text = State()
+
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_ID_SET
 
@@ -70,6 +79,13 @@ def row_get(row, field, default=None):
         return default
 
     return value if value is not None else default
+
+
+def get_broadcast_user_ids() -> list[int]:
+    with get_connection() as conn:
+        rows = conn.execute("SELECT telegram_id FROM users").fetchall()
+
+    return [row["telegram_id"] for row in rows]
 
 
 def build_dashboard_text() -> str:
@@ -252,23 +268,106 @@ async def show_admin_menu(message_or_callback):
 
 
 @router.message(Command("admin"))
-async def admin_command_handler(message: Message):
+async def admin_command_handler(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступ запрещён")
         return
 
+    await state.clear()
     clear_admin_waiting_state(message.from_user.id)
     await show_admin_menu(message)
 
 
 @router.callback_query(F.data == "admin_menu")
-async def admin_menu_handler(callback: CallbackQuery):
+@router.callback_query(F.data == "admin_panel")
+async def admin_menu_handler(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.clear()
+    clear_admin_waiting_state(callback.from_user.id)
+    await show_admin_menu(callback)
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_handler(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     clear_admin_waiting_state(callback.from_user.id)
-    await show_admin_menu(callback)
+    await state.set_state(BroadcastState.waiting_text)
+    await safe_edit_text(
+        callback.message,
+        "✍️ Отправь текст для рассылки",
+        reply_markup=admin_back_menu,
+    )
+    await callback.answer()
+
+
+@router.message(BroadcastState.waiting_text)
+async def admin_broadcast_text_handler(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(
+            "Отправь текст для рассылки.",
+            reply_markup=admin_back_menu,
+        )
+        return
+
+    await state.update_data(broadcast_text=text)
+    await message.answer(
+        "Отправить сообщение всем пользователям?",
+        reply_markup=admin_broadcast_confirm_menu,
+    )
+
+
+@router.callback_query(F.data == "admin_broadcast_confirm")
+async def admin_broadcast_confirm_handler(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    if not text:
+        await state.clear()
+        await safe_edit_text(
+            callback.message,
+            "Текст рассылки не найден. Начни заново.",
+            reply_markup=admin_back_menu,
+        )
+        await callback.answer("Нет текста для рассылки", show_alert=True)
+        return
+
+    await callback.answer("Рассылка началась")
+    await safe_edit_text(callback.message, "⏳ Отправляю рассылку...")
+
+    users = get_broadcast_user_ids()
+    for user_id in users:
+        try:
+            await callback.bot.send_message(user_id, text)
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+
+    add_bot_log(
+        "admin_broadcast",
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+        message=f"Рассылка отправлена пользователям: {len(users)}",
+    )
+    await state.clear()
+    await safe_edit_text(
+        callback.message,
+        "✅ Рассылка завершена",
+        reply_markup=admin_back_menu,
+    )
 
 
 @router.callback_query(F.data == "admin_dashboard")
@@ -750,11 +849,12 @@ async def admin_settings_handler(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "admin_close")
-async def admin_close_handler(callback: CallbackQuery):
+async def admin_close_handler(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
+    await state.clear()
     clear_admin_waiting_state(callback.from_user.id)
     try:
         await callback.message.delete()
