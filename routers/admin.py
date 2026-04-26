@@ -15,7 +15,7 @@ from database.db import (
     cancel_pending_manual_payment,
     clear_bot_logs,
     delete_key_completely,
-    extend_key,
+    extend_key_with_panel,
     get_admin_dashboard_stats,
     get_connection,
     get_key_by_id,
@@ -726,7 +726,7 @@ async def admin_extend_key_handler(callback: CallbackQuery):
         return
 
     try:
-        new_expires = extend_key(key_id, 30)
+        new_expires = await extend_key_with_panel(key_id, 30)
     except Exception:
         logger.exception("Failed to extend key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
         await callback.answer("Не удалось продлить ключ", show_alert=True)

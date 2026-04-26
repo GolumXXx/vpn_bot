@@ -173,15 +173,12 @@ async def _issue_key(
     if not server:
         raise XUIError("Нет активного VPN-сервера")
 
-    client = XUIClient(dict(server))
+    server_data = dict(server)
+    inbound_id = resolve_server_inbound_id(server_data)
+    client = XUIClient(server_data)
 
     try:
-        inbounds = await client.get_inbounds()
-        if not inbounds:
-            raise XUIError("На сервере не найдено ни одного inbound")
-
-        inbound = inbounds[0]
-        inbound_id = inbound["id"]
+        inbound = await client.get_inbound_by_id(inbound_id)
         flow = client._resolve_inbound_flow(inbound)
         email = generate_panel_email(telegram_id, username)
 
@@ -636,6 +633,22 @@ def get_active_server():
     return _fetchone("SELECT * FROM servers WHERE is_active = 1 LIMIT 1")
 
 
+def resolve_server_inbound_id(server):
+    inbound_id = server.get("panel_inbound_id") if isinstance(server, dict) else server["panel_inbound_id"]
+    if inbound_id is None:
+        raise XUIError("У активного сервера не задан panel_inbound_id")
+
+    try:
+        inbound_id = int(inbound_id)
+    except (TypeError, ValueError):
+        raise XUIError("panel_inbound_id должен быть числом")
+
+    if inbound_id <= 0:
+        raise XUIError("panel_inbound_id должен быть больше 0")
+
+    return inbound_id
+
+
 def generate_panel_email(telegram_id, username):
     suffix = uuid.uuid4().hex[:5]
     base = f"user_{username}" if username else f"user_{telegram_id}"
@@ -688,15 +701,14 @@ def get_latest_paid_key_by_tariff(telegram_id, tariff_name):
     )
 
 
-def extend_key(key_id, duration_days):
-    key = get_key_by_id(key_id)
-    if not key:
-        return None
-
+def calculate_extended_expiry(key, duration_days):
     now = _now()
     current_expires = parse_datetime(key["expires_at"])
     base_date = current_expires if current_expires and current_expires > now else now
-    new_expires = base_date + timedelta(days=duration_days)
+    return base_date + timedelta(days=duration_days)
+
+
+def update_key_expiry_in_db(key_id, new_expires):
     new_expires_str = _format_datetime(new_expires)
 
     _execute(
@@ -712,6 +724,49 @@ def extend_key(key_id, duration_days):
     )
 
     return new_expires_str
+
+
+def extend_key(key_id, duration_days):
+    key = get_key_by_id(key_id)
+    if not key:
+        return None
+
+    new_expires = calculate_extended_expiry(key, duration_days)
+    return update_key_expiry_in_db(key_id, new_expires)
+
+
+async def extend_key_with_panel(key_id, duration_days):
+    key = get_key_by_id(key_id)
+    if not key:
+        return None
+
+    server_id = key["server_id"]
+    inbound_id = key["panel_inbound_id"]
+    client_uuid = key["client_uuid"]
+    panel_email = key["panel_email"]
+
+    if not server_id or not inbound_id or not client_uuid:
+        raise XUIError("Ключ не связан с клиентом в панели 3x-ui")
+
+    server = get_server_by_id(server_id)
+    if not server:
+        raise XUIError("Сервер ключа не найден")
+
+    new_expires = calculate_extended_expiry(key, duration_days)
+    expire_time = int(new_expires.timestamp() * 1000)
+    client = XUIClient(dict(server))
+
+    try:
+        await client.update_client_expiry(
+            inbound_id=int(inbound_id),
+            client_uuid=client_uuid,
+            expire_time=expire_time,
+            email=panel_email,
+        )
+    finally:
+        await client.close()
+
+    return update_key_expiry_in_db(key_id, new_expires)
 
 
 def update_key_device_type(key_id, device_type):
@@ -793,12 +848,14 @@ def init_db():
                 port INTEGER,
                 protocol TEXT,
                 web_base_path TEXT,
+                panel_inbound_id INTEGER DEFAULT 1,
                 login TEXT,
                 password TEXT,
                 is_active INTEGER DEFAULT 1
             )
             """
         )
+        _add_column_if_missing(conn, "servers", "panel_inbound_id", "INTEGER DEFAULT 1")
 
         conn.execute(
             """

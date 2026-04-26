@@ -24,7 +24,7 @@ from database.db import (
     cancel_pending_manual_payment,
     create_manual_payment,
     create_paid_key,
-    extend_key,
+    extend_key_with_panel,
     get_latest_open_manual_payment,
     get_latest_paid_key_by_tariff,
     get_manual_payment_by_order_id,
@@ -280,7 +280,7 @@ async def fulfill_paid_order(
         if not key_id:
             raise ValueError(f"Cannot extend key without id for user {telegram_id}")
 
-        new_expires = extend_key(key_id, tariff["days"])
+        new_expires = await extend_key_with_panel(key_id, tariff["days"])
         logger.info(
             "Extended paid VPN key after manual confirmation: user_id=%s tariff=%s key_id=%s expires_at=%s",
             telegram_id,

@@ -172,6 +172,12 @@ class XUIClient:
         }
 
         await self._request("POST", "/panel/api/inbounds/addClient", data=payload)
+        self._inbounds_cache = None
+        await self.get_client_by_email_or_uuid(
+            inbound_id=inbound_id,
+            email=email,
+            client_uuid=client_uuid,
+        )
 
         return {
             "uuid": client_uuid,
@@ -420,6 +426,50 @@ class XUIClient:
             return self._build_trojan_uri(inbound, client, remark=remark)
 
         raise XUIError(f"Неподдерживаемый протокол: {protocol}")
+    
+    async def update_client_expiry(
+        self,
+        inbound_id: int,
+        client_uuid: str,
+        expire_time: int,
+        email: str | None = None,
+    ):
+        _, client = await self.get_client_by_email_or_uuid(
+            inbound_id=inbound_id,
+            email=email,
+            client_uuid=client_uuid,
+        )
+
+        updated_client = dict(client)
+        updated_client["expiryTime"] = expire_time
+
+        client_identifier = (
+            updated_client.get("id")
+            or updated_client.get("password")
+            or client_uuid
+        )
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [updated_client]}),
+        }
+
+        await self._request(
+            "POST",
+            f"/panel/api/inbounds/updateClient/{client_identifier}",
+            data=payload,
+        )
+        self._inbounds_cache = None
+
+        _, refreshed_client = await self.get_client_by_email_or_uuid(
+            inbound_id=inbound_id,
+            email=email,
+            client_uuid=client_uuid,
+        )
+        refreshed_expiry = int(refreshed_client.get("expiryTime") or 0)
+        if refreshed_expiry != expire_time:
+            raise XUIError("Панель не подтвердила новый срок клиента")
+
+        return True
     
     
     async def delete_client(self, inbound_id: int, client_uuid: str):

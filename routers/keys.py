@@ -13,7 +13,7 @@ import qrcode
 from database.db import (
     add_bot_log,
     delete_key_completely,
-    extend_key,
+    extend_key_with_panel,
     get_active_keys_for_reminders,
     get_key_by_id,
     get_user,
@@ -729,7 +729,7 @@ async def extend_key_handler(callback: CallbackQuery):
         return
 
     try:
-        extend_key(key_id, days)
+        await extend_key_with_panel(key_id, days)
     except Exception:
         logger.exception(
             "Failed to extend VPN key: user_id=%s key_id=%s days=%s",
