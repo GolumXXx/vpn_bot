@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import uuid
 import re
@@ -24,6 +25,7 @@ MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
 VALID_DEVICE_TYPES = {"ios", "android", "windows", "mac"}
 BOT_LOG_MESSAGE_MAX_LENGTH = 500
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -636,14 +638,28 @@ def get_active_server():
 def resolve_server_inbound_id(server):
     inbound_id = server.get("panel_inbound_id") if isinstance(server, dict) else server["panel_inbound_id"]
     if inbound_id is None:
+        server_id = server.get("id") if isinstance(server, dict) else server["id"]
+        logger.error("panel_inbound_id is not configured for server_id=%s", server_id)
         raise XUIError("У активного сервера не задан panel_inbound_id")
 
     try:
         inbound_id = int(inbound_id)
     except (TypeError, ValueError):
+        server_id = server.get("id") if isinstance(server, dict) else server["id"]
+        logger.error(
+            "Invalid panel_inbound_id for server_id=%s: %r",
+            server_id,
+            inbound_id,
+        )
         raise XUIError("panel_inbound_id должен быть числом")
 
     if inbound_id <= 0:
+        server_id = server.get("id") if isinstance(server, dict) else server["id"]
+        logger.error(
+            "Invalid non-positive panel_inbound_id for server_id=%s: %s",
+            server_id,
+            inbound_id,
+        )
         raise XUIError("panel_inbound_id должен быть больше 0")
 
     return inbound_id
@@ -741,17 +757,24 @@ async def extend_key_with_panel(key_id, duration_days):
         return None
 
     server_id = key["server_id"]
-    inbound_id = key["panel_inbound_id"]
     client_uuid = key["client_uuid"]
     panel_email = key["panel_email"]
 
-    if not server_id or not inbound_id or not client_uuid:
+    if not server_id or not client_uuid:
+        logger.error(
+            "Cannot extend key without panel binding: key_id=%s server_id=%s client_uuid=%s",
+            key_id,
+            server_id,
+            bool(client_uuid),
+        )
         raise XUIError("Ключ не связан с клиентом в панели 3x-ui")
 
     server = get_server_by_id(server_id)
     if not server:
+        logger.error("Cannot extend key because server was not found: key_id=%s server_id=%s", key_id, server_id)
         raise XUIError("Сервер ключа не найден")
 
+    inbound_id = resolve_server_inbound_id(server)
     new_expires = calculate_extended_expiry(key, duration_days)
     expire_time = int(new_expires.timestamp() * 1000)
     client = XUIClient(dict(server))
@@ -765,6 +788,16 @@ async def extend_key_with_panel(key_id, duration_days):
         )
     finally:
         await client.close()
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE vpn_keys
+            SET panel_inbound_id = ?
+            WHERE id = ?
+            """,
+            (inbound_id, key_id),
+        )
 
     return update_key_expiry_in_db(key_id, new_expires)
 
@@ -848,14 +881,14 @@ def init_db():
                 port INTEGER,
                 protocol TEXT,
                 web_base_path TEXT,
-                panel_inbound_id INTEGER DEFAULT 1,
+                panel_inbound_id INTEGER,
                 login TEXT,
                 password TEXT,
                 is_active INTEGER DEFAULT 1
             )
             """
         )
-        _add_column_if_missing(conn, "servers", "panel_inbound_id", "INTEGER DEFAULT 1")
+        _add_column_if_missing(conn, "servers", "panel_inbound_id", "INTEGER")
 
         conn.execute(
             """
@@ -1139,16 +1172,25 @@ async def delete_key_completely(key_id):
         return False, "Ключ не найден"
 
     server_id = key["server_id"]
-    inbound_id = key["panel_inbound_id"]
     client_uuid = key["client_uuid"]
 
-    if not server_id or not inbound_id or not client_uuid:
+    if not server_id or not client_uuid:
         delete_key_from_db(key_id)
         return True, "Ключ удалён только из базы"
 
     server = get_server_by_id(server_id)
     if not server:
         return False, "Сервер не найден"
+
+    try:
+        inbound_id = resolve_server_inbound_id(server)
+    except XUIError as error:
+        logger.error(
+            "Cannot delete key from panel because inbound is not configured: key_id=%s server_id=%s",
+            key_id,
+            server_id,
+        )
+        return False, str(error)
 
     client = XUIClient(dict(server))
 

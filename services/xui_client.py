@@ -1,8 +1,12 @@
 import aiohttp
 import json
+import logging
 import time
 import uuid
 from urllib.parse import quote
+
+
+logger = logging.getLogger(__name__)
 
 
 class XUIError(Exception):
@@ -203,13 +207,34 @@ class XUIClient:
             return default
 
     async def get_inbound_by_id(self, inbound_id: int):
+        try:
+            target_id = int(inbound_id)
+        except (TypeError, ValueError):
+            logger.error("Invalid inbound_id value: %r", inbound_id)
+            raise XUIError("inbound_id должен быть числом")
+
         inbounds = await self.get_inbounds()
 
         for inbound in inbounds:
-            if inbound.get("id") == inbound_id:
+            try:
+                current_id = int(inbound.get("id"))
+            except (TypeError, ValueError):
+                continue
+
+            if current_id == target_id:
                 return inbound
 
-        raise XUIError(f"Inbound с ID {inbound_id} не найден")
+        available_ids = [
+            inbound.get("id")
+            for inbound in inbounds
+            if inbound.get("id") is not None
+        ]
+        logger.error(
+            "Inbound was not found in 3x-ui: requested_id=%s available_ids=%s",
+            target_id,
+            available_ids,
+        )
+        raise XUIError(f"Inbound с ID {target_id} не найден")
 
     async def get_client_by_email_or_uuid(
         self,
