@@ -18,3 +18,4 @@ bot_backup.db
 # .env — прячет токен
 # venv/ и .venv/ — виртуальное окружение
 # __pycache__/ — мусор Python
+bot.db
