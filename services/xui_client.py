@@ -149,8 +149,12 @@ class XUIClient:
         expire_time = int((time.time() + expire_days * 86400) * 1000)
         total_bytes = total_gb * 1024 * 1024 * 1024 if total_gb > 0 else 0
 
-        inbound = await self.get_inbound_by_id(inbound_id)
-        protocol = inbound.get("protocol", "")
+        try:
+            inbound = await self.get_inbound_by_id(inbound_id)
+            protocol = inbound.get("protocol", "")
+        except Exception:
+            logger.exception("Failed to prepare XUI client creation: inbound_id=%s email=%s", inbound_id, email)
+            raise
 
         client_entry = {
             "email": email,
@@ -175,12 +179,28 @@ class XUIClient:
             "settings": json.dumps({"clients": [client_entry]}),
         }
 
-        await self._request("POST", "/panel/api/inbounds/addClient", data=payload)
-        self._inbounds_cache = None
-        await self.get_client_by_email_or_uuid(
-            inbound_id=inbound_id,
-            email=email,
-            client_uuid=client_uuid,
+        try:
+            await self._request("POST", "/panel/api/inbounds/addClient", data=payload)
+            self._inbounds_cache = None
+            await self.get_client_by_email_or_uuid(
+                inbound_id=inbound_id,
+                email=email,
+                client_uuid=client_uuid,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to add XUI client: inbound_id=%s email=%s client_uuid_prefix=%s",
+                inbound_id,
+                email,
+                client_uuid[:8],
+            )
+            raise
+
+        logger.info(
+            "Added XUI client: inbound_id=%s email=%s client_uuid_prefix=%s",
+            inbound_id,
+            email,
+            client_uuid[:8],
         )
 
         return {
@@ -410,39 +430,11 @@ class XUIClient:
     ) -> str:
         inbound = await self.get_inbound_by_id(inbound_id)
         protocol = inbound.get("protocol", "")
-        client = None
-
-        try:
-            _, client = await self.get_client_by_email_or_uuid(
-                inbound_id=inbound_id,
-                email=email,
-                client_uuid=client_uuid,
-            )
-        except Exception:
-            pass
-
-        if client is None:
-            if protocol == "vless":
-                if not client_uuid:
-                    raise XUIError("Нет UUID для VLESS клиента")
-
-                client = {
-                    "id": client_uuid,
-                    "email": email,
-                    "flow": flow,
-                }
-
-            elif protocol == "trojan":
-                if not client_uuid:
-                    raise XUIError("Нет password/UUID для Trojan клиента")
-
-                client = {
-                    "password": client_uuid,
-                    "email": email,
-                    "flow": flow,
-                }
-            else:
-                raise XUIError(f"Неподдерживаемый протокол: {protocol}")
+        _, client = await self.get_client_by_email_or_uuid(
+            inbound_id=inbound_id,
+            email=email,
+            client_uuid=client_uuid,
+        )
 
         if protocol == "vless":
             return self._build_vless_uri(inbound, client, remark=remark)
@@ -459,11 +451,20 @@ class XUIClient:
         expire_time: int,
         email: str | None = None,
     ):
-        _, client = await self.get_client_by_email_or_uuid(
-            inbound_id=inbound_id,
-            email=email,
-            client_uuid=client_uuid,
-        )
+        try:
+            _, client = await self.get_client_by_email_or_uuid(
+                inbound_id=inbound_id,
+                email=email,
+                client_uuid=client_uuid,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to find XUI client before expiry update: inbound_id=%s email=%s client_uuid_prefix=%s",
+                inbound_id,
+                email,
+                client_uuid[:8],
+            )
+            raise
 
         updated_client = dict(client)
         updated_client["expiryTime"] = expire_time
@@ -478,12 +479,21 @@ class XUIClient:
             "settings": json.dumps({"clients": [updated_client]}),
         }
 
-        await self._request(
-            "POST",
-            f"/panel/api/inbounds/updateClient/{client_identifier}",
-            data=payload,
-        )
-        self._inbounds_cache = None
+        try:
+            await self._request(
+                "POST",
+                f"/panel/api/inbounds/updateClient/{client_identifier}",
+                data=payload,
+            )
+            self._inbounds_cache = None
+        except Exception:
+            logger.exception(
+                "Failed to update XUI client expiry: inbound_id=%s email=%s client_uuid_prefix=%s",
+                inbound_id,
+                email,
+                client_uuid[:8],
+            )
+            raise
 
         _, refreshed_client = await self.get_client_by_email_or_uuid(
             inbound_id=inbound_id,
@@ -494,14 +504,35 @@ class XUIClient:
         if refreshed_expiry != expire_time:
             raise XUIError("Панель не подтвердила новый срок клиента")
 
+        logger.info(
+            "Updated XUI client expiry: inbound_id=%s email=%s client_uuid_prefix=%s expire_time=%s",
+            inbound_id,
+            email,
+            client_uuid[:8],
+            expire_time,
+        )
         return True
     
     
     async def delete_client(self, inbound_id: int, client_uuid: str):
-        await self._request(
-            "POST",
-            f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
-            data={},
-        )
+        try:
+            await self._request(
+                "POST",
+                f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
+                data={},
+            )
+            self._inbounds_cache = None
+        except Exception:
+            logger.exception(
+                "Failed to delete XUI client: inbound_id=%s client_uuid_prefix=%s",
+                inbound_id,
+                client_uuid[:8],
+            )
+            raise
 
+        logger.info(
+            "Deleted XUI client: inbound_id=%s client_uuid_prefix=%s",
+            inbound_id,
+            client_uuid[:8],
+        )
         return True

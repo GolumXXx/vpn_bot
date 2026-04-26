@@ -42,6 +42,7 @@ from keyboards import (
 )
 from routers.payments import TARIFFS
 from routers.ui import safe_edit_text
+from utils.rows import row_get
 
 
 router = Router()
@@ -67,18 +68,6 @@ def is_admin(user_id: int) -> bool:
 def clear_admin_waiting_state(user_id: int):
     WAITING_SEARCH_ADMINS.discard(user_id)
     WAITING_KEY_SEARCH_ADMINS.discard(user_id)
-
-
-def row_get(row, field, default=None):
-    if not row:
-        return default
-
-    try:
-        value = row[field]
-    except (IndexError, KeyError, TypeError):
-        return default
-
-    return value if value is not None else default
 
 
 def get_broadcast_user_ids() -> list[int]:

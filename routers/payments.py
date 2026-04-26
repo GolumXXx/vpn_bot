@@ -48,6 +48,8 @@ from keyboards import (
 )
 from routers.ui import safe_edit_text
 from services.xui_client import XUIError
+from texts.common import GENERIC_ERROR_TEXT, MAIN_MENU_TEXT, VPN_KEY_ISSUE_ERROR_TEXT
+from utils.rows import row_get
 
 
 router = Router()
@@ -74,44 +76,12 @@ RENEW_TEXT = (
     "👇 Выбери тариф ниже:"
 )
 
-MAIN_MENU_TEXT = (
-    "🚀 GolumVPN — быстрый и стабильный интернет\n\n"
-    "«Моя прелесть…» — это уже не кольцо,\n"
-    "а твой стабильный интернет 😎\n\n"
-    "😤 Забудь про:\n"
-    "📶 зависающие видео\n"
-    "💌 пропущенные сообщения\n"
-    "▶️ навязчивую рекламу\n\n"
-    "🔑 Попробуй бесплатно или оформи доступ\n"
-    "👇 Выбери, что хочешь сделать:"
-)
-
-GENERIC_ERROR_TEXT = (
-    "Что-то пошло не так 😕\n\n"
-    "Попробуй ещё раз или обратись в поддержку."
-)
-
-VPN_KEY_ERROR_TEXT = (
-    "Не удалось выдать VPN-ключ\n\n"
-    "Попробуй ещё раз позже или обратись в поддержку."
-)
+VPN_KEY_ERROR_TEXT = VPN_KEY_ISSUE_ERROR_TEXT
 
 MANUAL_PAYMENT_UNAVAILABLE_TEXT = (
     "Ручная оплата временно недоступна.\n\n"
     "Напиши в поддержку."
 )
-
-
-def row_get(row, field, default=None):
-    if not row:
-        return default
-
-    try:
-        value = row[field]
-    except (IndexError, KeyError, TypeError):
-        return default
-
-    return value if value is not None else default
 
 
 def build_tariff_text(tariff_code: str) -> str | None:

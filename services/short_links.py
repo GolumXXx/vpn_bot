@@ -2,37 +2,18 @@ import os
 import secrets
 import sqlite3
 import string
-from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
+from database.connection import BASE_DIR, DATETIME_FORMAT, get_connection
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "bot.db"
-DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SHORT_CODE_ALPHABET = string.ascii_letters + string.digits
 SHORT_CODE_LENGTH = 8
 
 
 load_dotenv(BASE_DIR / ".env")
-
-
-@contextmanager
-def get_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=30, cached_statements=128)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 30000")
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def init_short_links_schema(conn):

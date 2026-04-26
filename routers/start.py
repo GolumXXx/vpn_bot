@@ -5,27 +5,9 @@ from aiogram.types import Message, CallbackQuery
 from database.db import add_or_update_user
 from keyboards import get_main_inline_menu, reply_menu
 from routers.ui import safe_edit_text
+from texts.common import MAIN_MENU_TEXT, WELCOME_TEXT
 
 router = Router()
-
-
-WELCOME_TEXT = (
-    "Привет 👋\n\n"
-    "Здесь можно подключить VPN, продлить подписку "
-    "и получить пробный доступ."
-)
-
-MAIN_MENU_TEXT = (
-    "🚀 GolumVPN — быстрый и стабильный интернет\n\n"
-    "«Моя прелесть…» — это уже не кольцо,\n"
-    "а твой стабильный интернет 😎\n\n"
-    "😤 Забудь про:\n"
-    "📶 зависающие видео\n"
-    "💌 пропущенные сообщения\n"
-    "▶️ навязчивую рекламу\n\n"
-    "🔑 Попробуй бесплатно или оформи доступ\n"
-    "👇 Выбери, что хочешь сделать:"
-)
 
 
 async def send_main_menu(message: Message):

@@ -2,10 +2,9 @@ import logging
 import sqlite3
 import uuid
 import re
-from contextlib import contextmanager
 from datetime import datetime, timedelta
-from pathlib import Path
 
+from database.connection import DATETIME_FORMAT, get_connection
 from services.short_links import (
     delete_short_link_by_url,
     init_short_links_schema,
@@ -13,9 +12,6 @@ from services.short_links import (
 from services.xui_client import XUIClient, XUIError
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "bot.db"
-DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 MANUAL_PAYMENT_STATUS_PENDING = "pending_receipt"
 MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED = "receipt_uploaded"
 MANUAL_PAYMENT_STATUS_WAITING_ADMIN = "waiting_admin_confirmation"
@@ -28,19 +24,8 @@ BOT_LOG_MESSAGE_MAX_LENGTH = 500
 logger = logging.getLogger(__name__)
 
 
-@contextmanager
-def get_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=30, cached_statements=128)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 30000")
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+class TrialAlreadyUsedError(Exception):
+    pass
 
 
 def _fetchone(query, params=()):
@@ -178,6 +163,7 @@ async def _issue_key(
     server_data = dict(server)
     inbound_id = resolve_server_inbound_id(server_data)
     client = XUIClient(server_data)
+    result = None
 
     try:
         inbound = await client.get_inbound_by_id(inbound_id)
@@ -201,31 +187,53 @@ async def _issue_key(
         if not vless_link or not vless_link.startswith("vless://"):
             raise XUIError("Не удалось построить корректный VLESS-ключ")
 
-        with get_connection() as conn:
-            _insert_vpn_key(
-                conn=conn,
-                telegram_id=telegram_id,
-                key_name=key_name,
-                key_value=vless_link,
-                is_trial=int(is_trial),
-                server_id=server["id"],
-                inbound_id=inbound_id,
-                email=email,
-                client_uuid=result["uuid"],
-                duration_days=duration_days,
-                traffic_limit_gb=traffic_limit_gb,
-            )
-
-            if is_trial:
-                conn.execute(
-                    """
-                    UPDATE users
-                    SET used_trial = 1,
-                        trial_activated_at = ?
-                    WHERE telegram_id = ?
-                    """,
-                    (_format_datetime(_now()), telegram_id),
+        try:
+            with get_connection() as conn:
+                _insert_vpn_key(
+                    conn=conn,
+                    telegram_id=telegram_id,
+                    key_name=key_name,
+                    key_value=vless_link,
+                    is_trial=int(is_trial),
+                    server_id=server["id"],
+                    inbound_id=inbound_id,
+                    email=email,
+                    client_uuid=result["uuid"],
+                    duration_days=duration_days,
+                    traffic_limit_gb=traffic_limit_gb,
                 )
+        except Exception:
+            logger.exception(
+                "Failed to save issued VPN key, rolling back XUI client: user_id=%s server_id=%s inbound_id=%s email=%s client_uuid_prefix=%s",
+                telegram_id,
+                server["id"],
+                inbound_id,
+                email,
+                result["uuid"][:8],
+            )
+            try:
+                await client.delete_client(
+                    inbound_id=inbound_id,
+                    client_uuid=result["uuid"],
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to rollback XUI client after DB error: user_id=%s inbound_id=%s client_uuid_prefix=%s",
+                    telegram_id,
+                    inbound_id,
+                    result["uuid"][:8],
+                )
+            raise
+
+        logger.info(
+            "Issued VPN key: user_id=%s server_id=%s inbound_id=%s email=%s client_uuid_prefix=%s is_trial=%s",
+            telegram_id,
+            server["id"],
+            inbound_id,
+            email,
+            result["uuid"][:8],
+            bool(is_trial),
+        )
 
         return vless_link
     finally:
@@ -613,6 +621,39 @@ def mark_trial_as_used(telegram_id):
     )
 
 
+def reserve_trial_usage(telegram_id) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE users
+            SET used_trial = 1,
+                trial_activated_at = ?
+            WHERE telegram_id = ?
+              AND COALESCE(used_trial, 0) = 0
+            """,
+            (_format_datetime(_now()), telegram_id),
+        )
+        return cursor.rowcount > 0
+
+
+def rollback_trial_usage(telegram_id):
+    _execute(
+        """
+        UPDATE users
+        SET used_trial = 0,
+            trial_activated_at = NULL
+        WHERE telegram_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM vpn_keys
+              WHERE telegram_id = ?
+                AND is_trial = 1
+          )
+        """,
+        (telegram_id, telegram_id),
+    )
+
+
 def get_user(telegram_id):
     return _fetchone(
         "SELECT * FROM users WHERE telegram_id = ?",
@@ -691,15 +732,23 @@ async def create_paid_key(
 
 
 async def create_trial_key(telegram_id, username=None, first_name=None):
-    return await _issue_key(
-        telegram_id=telegram_id,
-        key_name="trial",
-        duration_days=7,
-        username=username,
-        first_name=first_name,
-        traffic_limit_gb=0,
-        is_trial=True,
-    )
+    add_or_update_user(telegram_id, username, first_name)
+    if not reserve_trial_usage(telegram_id):
+        raise TrialAlreadyUsedError("Пробный доступ уже использован")
+
+    try:
+        return await _issue_key(
+            telegram_id=telegram_id,
+            key_name="trial",
+            duration_days=7,
+            username=username,
+            first_name=first_name,
+            traffic_limit_gb=0,
+            is_trial=True,
+        )
+    except Exception:
+        rollback_trial_usage(telegram_id)
+        raise
 
 
 def get_latest_paid_key_by_tariff(telegram_id, tariff_name):

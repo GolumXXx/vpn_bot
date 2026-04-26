@@ -5,7 +5,6 @@ from io import BytesIO
 from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 import qrcode
@@ -25,6 +24,9 @@ from database.db import (
     update_key_device_type,
 )
 from services.short_links import resolve_vless_link
+from texts.common import GENERIC_ERROR_TEXT, VPN_KEY_READ_ERROR_TEXT
+from utils.rows import row_get
+from utils.telegram import safe_edit_text
 
 
 load_dotenv()
@@ -43,14 +45,7 @@ def parse_admin_ids(raw_value: str) -> set[int]:
 
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 
-GENERIC_ERROR_TEXT = (
-    "Что-то пошло не так 😕\n\n"
-    "Попробуй ещё раз или обратись в поддержку."
-)
-
-VPN_KEY_ERROR_TEXT = (
-    "Не удалось получить корректный VPN-ключ. Попробуй пересоздать ключ."
-)
+VPN_KEY_ERROR_TEXT = VPN_KEY_READ_ERROR_TEXT
 
 REMINDER_INTERVAL_SECONDS = 10 * 60
 ONE_DAY_REMINDER_TEXT = (
@@ -139,18 +134,6 @@ DEVICE_CONFIGS = {
 }
 
 
-def row_get(row, field, default=None):
-    if not row:
-        return default
-
-    try:
-        value = row[field]
-    except (IndexError, KeyError, TypeError):
-        return default
-
-    return value if value is not None else default
-
-
 def first_row_value(row, fields, default=None):
     for field in fields:
         value = row_get(row, field)
@@ -224,18 +207,6 @@ def get_primary_subscription_key(keys):
         return max(active_keys, key=get_key_relevance_sort_value)
 
     return max(keys, key=get_key_relevance_sort_value)
-
-
-async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
-    try:
-        await callback.message.edit_text(text, reply_markup=reply_markup)
-    except TelegramBadRequest as error:
-        if "message is not modified" not in str(error).lower():
-            logger.exception("Failed to edit Telegram message")
-            await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
-    except Exception:
-        logger.exception("Unexpected error while editing Telegram message")
-        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
 
 
 def format_key_status(key) -> str:
