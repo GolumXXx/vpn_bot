@@ -2,7 +2,6 @@ import asyncio
 import logging
 from io import BytesIO
 from datetime import datetime, timedelta
-from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -23,7 +22,7 @@ from database.db import (
     parse_datetime,
     update_key_device_type,
 )
-from services.short_links import resolve_vless_link
+from services.short_links import create_short_link, resolve_vless_link
 from texts.common import GENERIC_ERROR_TEXT, VPN_KEY_READ_ERROR_TEXT
 from utils.rows import row_get
 from utils.telegram import safe_edit_text
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 ADMIN_ID_SET = set(ADMIN_IDS)
 
 VPN_KEY_ERROR_TEXT = VPN_KEY_READ_ERROR_TEXT
+SHORT_LINK_BASE_URL = "http://golum.shop"
 
 REMINDER_INTERVAL_SECONDS = 10 * 60
 ONE_DAY_REMINDER_TEXT = (
@@ -873,9 +873,40 @@ async def copy_key_handler(callback: CallbackQuery):
         await callback.answer("Не удалось получить ключ", show_alert=True)
         return
 
+    try:
+        short_url = create_short_link(vless_key, base_url=SHORT_LINK_BASE_URL)
+    except Exception:
+        logger.exception(
+            "Failed to create short VPN link: user_id=%s key_id=%s",
+            callback.from_user.id,
+            key_id,
+        )
+        await callback.answer("Ошибка создания ссылки", show_alert=True)
+        return
+
+    if not short_url:
+        logger.error(
+            "Short VPN link is empty: user_id=%s key_id=%s",
+            callback.from_user.id,
+            key_id,
+        )
+        await callback.answer("Ошибка создания ссылки", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Скопировать ключ",
+                    url=short_url,
+                )
+            ]
+        ]
+    )
+
     await callback.message.answer(
-        f"<code>{escape(vless_key)}</code>",
-        parse_mode="HTML",
+        f"Ваш доступ к VPN:\n{short_url}",
+        reply_markup=keyboard,
         disable_web_page_preview=True,
     )
     await callback.answer()
