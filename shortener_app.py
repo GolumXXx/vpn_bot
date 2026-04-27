@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bot.db"
 CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+PUBLIC_BASE_URL = "https://golum.shop"
 
 app = FastAPI()
 
@@ -62,8 +63,10 @@ def find_key_by_code(code: str) -> str | None:
     return str(key).strip() or None
 
 
-def render_key_page(key: str) -> str:
+def render_key_page(key: str, code: str) -> str:
     escaped_key = html.escape(key, quote=True)
+    browser_url = f"{PUBLIC_BASE_URL}/s/{code}"
+    escaped_browser_url = html.escape(browser_url, quote=True)
     js_key = (
         json.dumps(key)
         .replace("<", "\\u003c")
@@ -103,7 +106,7 @@ def render_key_page(key: str) -> str:
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
     main {{
-      display: none;
+      display: block;
       width: min(100%, 620px);
       padding: 28px;
       border: 1px solid var(--border);
@@ -141,7 +144,9 @@ def render_key_page(key: str) -> str:
     textarea:focus {{
       border-color: var(--accent);
     }}
-    button {{
+    button,
+    .button-link {{
+      display: block;
       width: 100%;
       margin-top: 16px;
       padding: 13px 16px;
@@ -152,8 +157,11 @@ def render_key_page(key: str) -> str:
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+      text-align: center;
+      text-decoration: none;
     }}
-    button:hover {{
+    button:hover,
+    .button-link:hover {{
       background: var(--accent-hover);
     }}
     .secondary {{
@@ -174,31 +182,27 @@ def render_key_page(key: str) -> str:
 </head>
 <body>
   <main id="fallback">
-    <h1 id="title">Открываем VPN</h1>
-    <p id="hint">Если приложение не открылось автоматически, нажми кнопку ниже или скопируй ключ вручную.</p>
+    <h1 id="title">Подключить VPN</h1>
+    <p id="hint">Нажми кнопку, чтобы открыть ключ в VPN-приложении.</p>
+    <button id="openVpn" type="button">🚀 Открыть VPN</button>
+    <p>Если VPN не открылся — нажмите кнопку выше.</p>
+    <a class="button-link secondary" href="{escaped_browser_url}" target="_blank" rel="noopener noreferrer">🌐 Открыть в браузере</a>
     <textarea id="key" readonly spellcheck="false">{escaped_key}</textarea>
-    <button id="openButton" type="button">Открыть VPN</button>
     <button id="copyButton" class="secondary" type="button">Скопировать</button>
     <div id="status" class="status" aria-live="polite"></div>
   </main>
   <script>
     const key = {js_key};
-    const fallback = document.getElementById("fallback");
     const title = document.getElementById("title");
     const statusNode = document.getElementById("status");
     const keyNode = document.getElementById("key");
-    const openButton = document.getElementById("openButton");
+    const openVpnButton = document.getElementById("openVpn");
     const copyButton = document.getElementById("copyButton");
-
-    function showFallback() {{
-      fallback.classList.add("is-visible");
-    }}
 
     function openVpn() {{
       if (!key) {{
         title.textContent = "Ключ не найден";
         statusNode.textContent = "Пустой ключ нельзя открыть.";
-        showFallback();
         return false;
       }}
 
@@ -210,7 +214,6 @@ def render_key_page(key: str) -> str:
       if (!key) {{
         title.textContent = "Ключ не найден";
         statusNode.textContent = "Пустой ключ нельзя скопировать.";
-        showFallback();
         return false;
       }}
 
@@ -228,12 +231,8 @@ def render_key_page(key: str) -> str:
       }}
     }}
 
-    openButton.addEventListener("click", openVpn);
+    openVpnButton.addEventListener("click", openVpn);
     copyButton.addEventListener("click", copyKey);
-    window.addEventListener("DOMContentLoaded", () => {{
-      openVpn();
-      setTimeout(showFallback, 1500);
-    }});
   </script>
 </body>
 </html>"""
@@ -250,4 +249,4 @@ def open_short_link(code: str):
     if not key:
         return PlainTextResponse("Link not found", status_code=404)
 
-    return HTMLResponse(render_key_page(key))
+    return HTMLResponse(render_key_page(key, code.strip()))
