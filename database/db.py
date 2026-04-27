@@ -185,8 +185,10 @@ async def _issue_key(
     traffic_limit_gb=0,
     is_trial=False,
     include_details=False,
+    upsert_user=True,
 ):
-    add_or_update_user(telegram_id, username, first_name)
+    if upsert_user:
+        add_or_update_user(telegram_id, username, first_name)
 
     server = get_active_server()
     if not server:
@@ -621,6 +623,7 @@ async def create_paid_key(
     first_name=None,
     traffic_limit_gb=0,
     include_details=False,
+    upsert_user=True,
 ):
     return await _issue_key(
         telegram_id=telegram_id,
@@ -631,10 +634,11 @@ async def create_paid_key(
         traffic_limit_gb=traffic_limit_gb,
         is_trial=False,
         include_details=include_details,
+        upsert_user=upsert_user,
     )
 
 
-async def create_trial_key(telegram_id, username=None, first_name=None):
+async def create_trial_key(telegram_id, username=None, first_name=None, include_details=False):
     add_or_update_user(telegram_id, username, first_name)
     if not reserve_trial_usage(telegram_id):
         raise TrialAlreadyUsedError("Пробный доступ уже использован")
@@ -648,6 +652,8 @@ async def create_trial_key(telegram_id, username=None, first_name=None):
             first_name=first_name,
             traffic_limit_gb=0,
             is_trial=True,
+            include_details=include_details,
+            upsert_user=False,
         )
     except Exception:
         rollback_trial_usage(telegram_id)

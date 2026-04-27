@@ -33,14 +33,14 @@ async def create_trial_subscription(
     username: str | None = None,
     first_name: str | None = None,
 ) -> int | None:
-    await create_trial_key(
+    created_key = await create_trial_key(
         telegram_id=telegram_id,
         username=username,
         first_name=first_name,
+        include_details=True,
     )
     logger.info("Created trial VPN key: user_id=%s", telegram_id)
-    keys = get_user_keys(telegram_id)
-    key_id = row_get(keys[0], "id") if keys else None
+    key_id = row_get(created_key, "key_id")
     add_bot_log(
         "trial_key_created",
         telegram_id=telegram_id,

@@ -67,6 +67,7 @@ async def fulfill_paid_order(
         first_name=first_name,
         traffic_limit_gb=0,
         include_details=True,
+        upsert_user=False,
     )
     key_id = row_get(created_key, "key_id")
     logger.info(
