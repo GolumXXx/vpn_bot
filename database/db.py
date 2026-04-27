@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta
 
 from database.connection import DATETIME_FORMAT, get_connection
+from repositories import payment_repo
 from services.short_links import (
     delete_short_link_by_url,
     init_short_links_schema,
@@ -104,17 +105,6 @@ def _is_valid_order_id(order_id) -> bool:
 def _manual_payment_idempotency_key(telegram_id, tariff_code, created_at: datetime) -> str:
     time_bucket = int(created_at.timestamp() // MANUAL_PAYMENT_IDEMPOTENCY_WINDOW_SECONDS)
     return f"manual:{telegram_id}:{tariff_code}:{time_bucket}"
-
-
-def _get_manual_payment_by_idempotency_key(conn, idempotency_key):
-    return conn.execute(
-        """
-        SELECT *
-        FROM manual_payments
-        WHERE idempotency_key = ?
-        """,
-        (idempotency_key,),
-    ).fetchone()
 
 
 def _upsert_user(conn, telegram_id, username, first_name):
@@ -365,52 +355,31 @@ def create_manual_payment(telegram_id, tariff_code):
         order_id = uuid.uuid4().hex[:8].upper()
         try:
             with get_connection() as conn:
-                existing_payment = _get_manual_payment_by_idempotency_key(conn, idempotency_key)
+                existing_payment = payment_repo.get_by_idempotency_key_conn(conn, idempotency_key)
                 if existing_payment:
                     return existing_payment
 
-                conn.execute(
-                    """
-                    UPDATE manual_payments
-                    SET status = ?,
-                        updated_at = ?
-                    WHERE telegram_id = ?
-                      AND status IN (?, ?, ?)
-                    """,
-                    (
-                        MANUAL_PAYMENT_STATUS_REPLACED,
-                        now,
-                        telegram_id,
-                        *MANUAL_PAYMENT_OPEN_STATUSES,
-                    ),
+                payment_repo.replace_open_payments_conn(
+                    conn,
+                    telegram_id=telegram_id,
+                    status=MANUAL_PAYMENT_STATUS_REPLACED,
+                    updated_at=now,
+                    open_statuses=MANUAL_PAYMENT_OPEN_STATUSES,
                 )
-                conn.execute(
-                    """
-                    INSERT INTO manual_payments (
-                        order_id,
-                        telegram_id,
-                        tariff_code,
-                        idempotency_key,
-                        status,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        order_id,
-                        telegram_id,
-                        tariff_code,
-                        idempotency_key,
-                        MANUAL_PAYMENT_STATUS_PENDING,
-                        now,
-                        now,
-                    ),
+                payment_repo.insert_manual_payment_conn(
+                    conn,
+                    order_id=order_id,
+                    telegram_id=telegram_id,
+                    tariff_code=tariff_code,
+                    idempotency_key=idempotency_key,
+                    status=MANUAL_PAYMENT_STATUS_PENDING,
+                    created_at=now,
+                    updated_at=now,
                 )
             return get_manual_payment_by_order_id(order_id)
         except sqlite3.IntegrityError:
             with get_connection() as conn:
-                existing_payment = _get_manual_payment_by_idempotency_key(conn, idempotency_key)
+                existing_payment = payment_repo.get_by_idempotency_key_conn(conn, idempotency_key)
                 if existing_payment:
                     return existing_payment
             continue
@@ -422,60 +391,22 @@ def get_manual_payment_by_order_id(order_id):
     if not _is_valid_order_id(order_id):
         return None
 
-    return _fetchone(
-        """
-        SELECT *
-        FROM manual_payments
-        WHERE order_id = ?
-        """,
-        (order_id,),
-    )
+    return payment_repo.get_by_order_id(order_id)
 
 
 def get_pending_manual_payments(limit=10):
-    return _fetchall(
-        """
-        SELECT *
-        FROM manual_payments
-        WHERE status IN (?, ?, ?, ?)
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (
-            *MANUAL_PAYMENT_REVIEW_STATUSES,
-            limit,
-        ),
-    )
+    return payment_repo.get_pending_by_statuses(MANUAL_PAYMENT_REVIEW_STATUSES, limit)
 
 
 def count_pending_manual_payments():
-    row = _fetchone(
-        """
-        SELECT COUNT(*)
-        FROM manual_payments
-        WHERE status IN (?, ?, ?, ?)
-        """,
-        (
-            *MANUAL_PAYMENT_REVIEW_STATUSES,
-        ),
-    )
+    row = payment_repo.count_by_statuses(MANUAL_PAYMENT_REVIEW_STATUSES)
     return row[0]
 
 
 def get_latest_open_manual_payment(telegram_id):
-    return _fetchone(
-        """
-        SELECT *
-        FROM manual_payments
-        WHERE telegram_id = ?
-          AND status IN (?, ?)
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (
-            telegram_id,
-            *MANUAL_PAYMENT_USER_OPEN_STATUSES,
-        ),
+    return payment_repo.get_latest_for_user_by_statuses(
+        telegram_id,
+        MANUAL_PAYMENT_USER_OPEN_STATUSES,
     )
 
 
@@ -484,25 +415,13 @@ def mark_manual_payment_waiting_admin(order_id, user_message_id=None):
         return False
 
     now = _format_datetime(_now())
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE manual_payments
-            SET status = ?,
-                user_message_id = COALESCE(?, user_message_id),
-                updated_at = ?
-            WHERE order_id = ?
-              AND status = ?
-            """,
-            (
-                MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-                user_message_id,
-                now,
-                order_id,
-                MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-            ),
-        )
-        return cursor.rowcount > 0
+    return payment_repo.mark_waiting_admin(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+        user_message_id=user_message_id,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+    )
 
 
 def reset_manual_payment_waiting_admin(order_id):
@@ -510,20 +429,11 @@ def reset_manual_payment_waiting_admin(order_id):
         return
 
     now = _format_datetime(_now())
-    _execute(
-        """
-        UPDATE manual_payments
-        SET status = ?,
-            updated_at = ?
-        WHERE order_id = ?
-          AND status = ?
-        """,
-        (
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-            now,
-            order_id,
-            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-        ),
+    payment_repo.reset_waiting_admin(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
     )
 
 
@@ -532,25 +442,13 @@ def cancel_pending_manual_payment(order_id):
         return False
 
     now = _format_datetime(_now())
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE manual_payments
-            SET status = ?,
-                cancelled_at = ?,
-                updated_at = ?
-            WHERE order_id = ?
-              AND status = ?
-            """,
-            (
-                MANUAL_PAYMENT_STATUS_CANCELLED,
-                now,
-                now,
-                order_id,
-                MANUAL_PAYMENT_STATUS_PENDING,
-            ),
-        )
-        return cursor.rowcount > 0
+    return payment_repo.cancel_pending(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_CANCELLED,
+        cancelled_at=now,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_PENDING,
+    )
 
 
 def mark_manual_payment_reminded(order_id):
@@ -558,24 +456,12 @@ def mark_manual_payment_reminded(order_id):
         return False
 
     now = _format_datetime(_now())
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE manual_payments
-            SET manual_reminded_at = ?,
-                updated_at = ?
-            WHERE order_id = ?
-              AND status = ?
-              AND manual_reminded_at IS NULL
-            """,
-            (
-                now,
-                now,
-                order_id,
-                MANUAL_PAYMENT_STATUS_PENDING,
-            ),
-        )
-        return cursor.rowcount > 0
+    return payment_repo.mark_reminded(
+        order_id=order_id,
+        reminded_at=now,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_PENDING,
+    )
 
 
 def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=None, user_message_id=None):
@@ -583,27 +469,14 @@ def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=N
         return
 
     now = _format_datetime(_now())
-    _execute(
-        """
-        UPDATE manual_payments
-        SET status = ?,
-            receipt_file_id = ?,
-            receipt_unique_id = ?,
-            user_message_id = ?,
-            updated_at = ?
-        WHERE order_id = ?
-          AND status IN (?, ?)
-        """,
-        (
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-            receipt_file_id,
-            receipt_unique_id,
-            user_message_id,
-            now,
-            order_id,
-            MANUAL_PAYMENT_STATUS_PENDING,
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-        ),
+    payment_repo.attach_receipt(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+        receipt_file_id=receipt_file_id,
+        receipt_unique_id=receipt_unique_id,
+        user_message_id=user_message_id,
+        updated_at=now,
+        allowed_statuses=MANUAL_PAYMENT_USER_OPEN_STATUSES,
     )
 
 
@@ -612,25 +485,13 @@ def start_manual_payment_processing(order_id, admin_id):
         return False
 
     now = _format_datetime(_now())
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE manual_payments
-            SET status = ?,
-                approved_by = ?,
-                updated_at = ?
-            WHERE order_id = ?
-              AND status IN (?, ?)
-            """,
-            (
-                MANUAL_PAYMENT_STATUS_PROCESSING,
-                admin_id,
-                now,
-                order_id,
-                *MANUAL_PAYMENT_APPROVABLE_STATUSES,
-            ),
-        )
-        return cursor.rowcount > 0
+    return payment_repo.start_processing(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_PROCESSING,
+        admin_id=admin_id,
+        updated_at=now,
+        allowed_statuses=MANUAL_PAYMENT_APPROVABLE_STATUSES,
+    )
 
 
 def reopen_manual_payment(order_id):
@@ -638,21 +499,11 @@ def reopen_manual_payment(order_id):
         return
 
     now = _format_datetime(_now())
-    _execute(
-        """
-        UPDATE manual_payments
-        SET status = ?,
-            approved_by = NULL,
-            updated_at = ?
-        WHERE order_id = ?
-          AND status = ?
-        """,
-        (
-            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-            now,
-            order_id,
-            MANUAL_PAYMENT_STATUS_PROCESSING,
-        ),
+    payment_repo.reopen_processing(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_PROCESSING,
     )
 
 
@@ -661,27 +512,14 @@ def mark_manual_payment_approved(order_id, admin_id):
         return False
 
     now = _format_datetime(_now())
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE manual_payments
-            SET status = ?,
-                approved_by = ?,
-                approved_at = ?,
-                updated_at = ?
-            WHERE order_id = ?
-              AND status = ?
-            """,
-            (
-                MANUAL_PAYMENT_STATUS_APPROVED,
-                admin_id,
-                now,
-                now,
-                order_id,
-                MANUAL_PAYMENT_STATUS_PROCESSING,
-            ),
-        )
-        return cursor.rowcount > 0
+    return payment_repo.mark_approved(
+        order_id=order_id,
+        status=MANUAL_PAYMENT_STATUS_APPROVED,
+        admin_id=admin_id,
+        approved_at=now,
+        updated_at=now,
+        expected_status=MANUAL_PAYMENT_STATUS_PROCESSING,
+    )
 
 
 def reserve_trial_usage(telegram_id) -> bool:

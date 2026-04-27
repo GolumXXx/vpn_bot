@@ -16,7 +16,6 @@ from database.db import (
     delete_key_completely,
     extend_key_with_panel,
     get_admin_dashboard_stats,
-    get_connection,
     get_key_by_id,
     get_latest_bot_logs,
     get_manual_payment_by_order_id,
@@ -37,6 +36,7 @@ from keyboards import (
     get_admin_pending_payments_menu,
     get_admin_user_keys_menu,
 )
+from repositories.user_repo import get_all_telegram_ids
 from routers.payments import TARIFFS
 from routers.ui import safe_edit_text
 from utils.rows import row_get
@@ -69,10 +69,7 @@ def clear_admin_waiting_state(user_id: int):
 
 
 def get_broadcast_user_ids() -> list[int]:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT telegram_id FROM users").fetchall()
-
-    return [row["telegram_id"] for row in rows]
+    return get_all_telegram_ids()
 
 
 def build_dashboard_text() -> str:
