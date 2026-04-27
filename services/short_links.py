@@ -103,6 +103,11 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
     )
     if not normalized_base_url:
         return vless_link
+    short_base_url = (
+        normalized_base_url
+        if normalized_base_url.endswith("/s")
+        else f"{normalized_base_url}/s"
+    )
 
     with get_connection() as conn:
         init_short_links_schema(conn)
@@ -117,7 +122,7 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
                     """,
                     (code, vless_link.strip(), _format_datetime(datetime.now())),
                 )
-                return f"{normalized_base_url}/{code}"
+                return f"{short_base_url}/{code}"
             except sqlite3.IntegrityError:
                 continue
 
