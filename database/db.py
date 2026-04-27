@@ -19,8 +19,28 @@ MANUAL_PAYMENT_STATUS_PROCESSING = "processing"
 MANUAL_PAYMENT_STATUS_APPROVED = "approved"
 MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
+MANUAL_PAYMENT_OPEN_STATUSES = (
+    MANUAL_PAYMENT_STATUS_PENDING,
+    MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+    MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+)
+MANUAL_PAYMENT_REVIEW_STATUSES = (
+    MANUAL_PAYMENT_STATUS_PENDING,
+    MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+    MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+    MANUAL_PAYMENT_STATUS_PROCESSING,
+)
+MANUAL_PAYMENT_USER_OPEN_STATUSES = (
+    MANUAL_PAYMENT_STATUS_PENDING,
+    MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+)
+MANUAL_PAYMENT_APPROVABLE_STATUSES = (
+    MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+    MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+)
 VALID_DEVICE_TYPES = {"ios", "android", "windows", "mac"}
 BOT_LOG_MESSAGE_MAX_LENGTH = 500
+MANUAL_PAYMENT_IDEMPOTENCY_WINDOW_SECONDS = 60
 ORDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{8}$")
 logger = logging.getLogger(__name__)
 
@@ -79,6 +99,22 @@ def _sanitize_bot_log_message(message):
 
 def _is_valid_order_id(order_id) -> bool:
     return bool(order_id and ORDER_ID_PATTERN.fullmatch(str(order_id).strip()))
+
+
+def _manual_payment_idempotency_key(telegram_id, tariff_code, created_at: datetime) -> str:
+    time_bucket = int(created_at.timestamp() // MANUAL_PAYMENT_IDEMPOTENCY_WINDOW_SECONDS)
+    return f"manual:{telegram_id}:{tariff_code}:{time_bucket}"
+
+
+def _get_manual_payment_by_idempotency_key(conn, idempotency_key):
+    return conn.execute(
+        """
+        SELECT *
+        FROM manual_payments
+        WHERE idempotency_key = ?
+        """,
+        (idempotency_key,),
+    ).fetchone()
 
 
 def _upsert_user(conn, telegram_id, username, first_name):
@@ -321,12 +357,18 @@ def clear_bot_logs():
 
 
 def create_manual_payment(telegram_id, tariff_code):
-    now = _format_datetime(_now())
+    now_value = _now()
+    now = _format_datetime(now_value)
+    idempotency_key = _manual_payment_idempotency_key(telegram_id, tariff_code, now_value)
 
     for _ in range(5):
         order_id = uuid.uuid4().hex[:8].upper()
         try:
             with get_connection() as conn:
+                existing_payment = _get_manual_payment_by_idempotency_key(conn, idempotency_key)
+                if existing_payment:
+                    return existing_payment
+
                 conn.execute(
                     """
                     UPDATE manual_payments
@@ -339,9 +381,7 @@ def create_manual_payment(telegram_id, tariff_code):
                         MANUAL_PAYMENT_STATUS_REPLACED,
                         now,
                         telegram_id,
-                        MANUAL_PAYMENT_STATUS_PENDING,
-                        MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-                        MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
+                        *MANUAL_PAYMENT_OPEN_STATUSES,
                     ),
                 )
                 conn.execute(
@@ -350,16 +390,18 @@ def create_manual_payment(telegram_id, tariff_code):
                         order_id,
                         telegram_id,
                         tariff_code,
+                        idempotency_key,
                         status,
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         order_id,
                         telegram_id,
                         tariff_code,
+                        idempotency_key,
                         MANUAL_PAYMENT_STATUS_PENDING,
                         now,
                         now,
@@ -367,6 +409,10 @@ def create_manual_payment(telegram_id, tariff_code):
                 )
             return get_manual_payment_by_order_id(order_id)
         except sqlite3.IntegrityError:
+            with get_connection() as conn:
+                existing_payment = _get_manual_payment_by_idempotency_key(conn, idempotency_key)
+                if existing_payment:
+                    return existing_payment
             continue
 
     raise ValueError("Не удалось создать ID оплаты")
@@ -396,10 +442,7 @@ def get_pending_manual_payments(limit=10):
         LIMIT ?
         """,
         (
-            MANUAL_PAYMENT_STATUS_PENDING,
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-            MANUAL_PAYMENT_STATUS_PROCESSING,
+            *MANUAL_PAYMENT_REVIEW_STATUSES,
             limit,
         ),
     )
@@ -413,10 +456,7 @@ def count_pending_manual_payments():
         WHERE status IN (?, ?, ?, ?)
         """,
         (
-            MANUAL_PAYMENT_STATUS_PENDING,
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
-            MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-            MANUAL_PAYMENT_STATUS_PROCESSING,
+            *MANUAL_PAYMENT_REVIEW_STATUSES,
         ),
     )
     return row[0]
@@ -434,8 +474,7 @@ def get_latest_open_manual_payment(telegram_id):
         """,
         (
             telegram_id,
-            MANUAL_PAYMENT_STATUS_PENDING,
-            MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+            *MANUAL_PAYMENT_USER_OPEN_STATUSES,
         ),
     )
 
@@ -588,8 +627,7 @@ def start_manual_payment_processing(order_id, admin_id):
                 admin_id,
                 now,
                 order_id,
-                MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
-                MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
+                *MANUAL_PAYMENT_APPROVABLE_STATUSES,
             ),
         )
         return cursor.rowcount > 0
@@ -1007,6 +1045,7 @@ def init_db():
                 order_id TEXT NOT NULL UNIQUE,
                 telegram_id INTEGER NOT NULL,
                 tariff_code TEXT NOT NULL,
+                idempotency_key TEXT,
                 status TEXT NOT NULL,
                 receipt_file_id TEXT,
                 receipt_unique_id TEXT,
@@ -1035,6 +1074,7 @@ def init_db():
             """
         )
         init_short_links_schema(conn)
+        _add_column_if_missing(conn, "manual_payments", "idempotency_key", "TEXT")
         _add_column_if_missing(conn, "manual_payments", "manual_reminded_at", "TEXT")
         _add_column_if_missing(conn, "manual_payments", "cancelled_at", "TEXT")
         conn.execute(
@@ -1082,6 +1122,12 @@ def init_db():
             """
             CREATE INDEX IF NOT EXISTS idx_manual_payments_order_id
             ON manual_payments (order_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_payments_idempotency_key
+            ON manual_payments (idempotency_key)
             """
         )
         conn.execute(

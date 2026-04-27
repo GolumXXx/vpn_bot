@@ -15,6 +15,7 @@ from database.db import (
     MANUAL_PAYMENT_STATUS_CANCELLED,
     MANUAL_PAYMENT_STATUS_PENDING,
     MANUAL_PAYMENT_STATUS_PROCESSING,
+    MANUAL_PAYMENT_APPROVABLE_STATUSES,
     MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED,
     MANUAL_PAYMENT_STATUS_REPLACED,
     MANUAL_PAYMENT_STATUS_WAITING_ADMIN,
@@ -22,7 +23,6 @@ from database.db import (
     add_or_update_user,
     attach_manual_payment_receipt,
     cancel_pending_manual_payment,
-    create_manual_payment,
     create_paid_key,
     extend_key_with_panel,
     get_latest_open_manual_payment,
@@ -46,6 +46,7 @@ from keyboards import (
     renew_menu,
 )
 from routers.ui import safe_edit_text
+from services.payment_providers import ManualPaymentProvider
 from services.xui_client import XUIError
 from texts.common import GENERIC_ERROR_TEXT, MAIN_MENU_TEXT, VPN_KEY_ISSUE_ERROR_TEXT
 from utils.rows import row_get
@@ -98,6 +99,9 @@ def build_tariff_text(tariff_code: str) -> str | None:
 
 def get_tariff_payment_url(tariff_code: str) -> str | None:
     return PAYMENT_URLS.get(tariff_code)
+
+
+manual_payment_provider = ManualPaymentProvider(get_tariff_payment_url)
 
 
 def build_manual_payment_text(payment, tariff: dict, payment_url: str | None = None) -> str:
@@ -403,10 +407,12 @@ async def process_payment(callback: CallbackQuery):
             username=user.username,
             first_name=user.first_name,
         )
-        payment = create_manual_payment(
+        payment_result = manual_payment_provider.create_payment(
             telegram_id=user.id,
             tariff_code=tariff_code,
+            amount=tariff["price"],
         )
+        payment = payment_result.raw_payment
         logger.info(
             "Created manual payment request: order_id=%s user_id=%s tariff=%s",
             row_get(payment, "order_id"),
@@ -420,7 +426,7 @@ async def process_payment(callback: CallbackQuery):
             order_id=row_get(payment, "order_id"),
             message=f"Создана заявка на оплату: тариф={tariff_code}",
         )
-        payment_url = get_tariff_payment_url(tariff_code)
+        payment_url = payment_result.payment_url
         order_id = row_get(payment, "order_id")
         reply_markup = manual_payment_wait_menu
 
@@ -651,7 +657,7 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
         return
 
     status = row_get(payment, "status")
-    if status not in {MANUAL_PAYMENT_STATUS_RECEIPT_UPLOADED, MANUAL_PAYMENT_STATUS_WAITING_ADMIN}:
+    if status not in MANUAL_PAYMENT_APPROVABLE_STATUSES:
         await callback.answer(get_manual_payment_status_alert(status), show_alert=True)
         return
 
