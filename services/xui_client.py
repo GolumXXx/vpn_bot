@@ -31,7 +31,7 @@ class XUIClient:
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
-            connector = aiohttp.TCPConnector()
+            connector = aiohttp.TCPConnector(ssl=False)
             jar = aiohttp.CookieJar(unsafe=True)
             timeout = aiohttp.ClientTimeout(total=15)
 
