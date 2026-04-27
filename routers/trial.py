@@ -3,9 +3,13 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
-from database.db import TrialAlreadyUsedError, add_bot_log, create_trial_key, get_user_keys
 from keyboards import trial_menu
 from routers.ui import safe_edit_text
+from services.vpn_key_service import (
+    TrialAlreadyUsedError,
+    create_trial_subscription,
+    log_key_issue_error,
+)
 from services.xui_client import XUIError
 
 router = Router()
@@ -29,20 +33,10 @@ async def get_trial_handler(callback: CallbackQuery):
     user = callback.from_user
 
     try:
-        await create_trial_key(
+        await create_trial_subscription(
             telegram_id=user.id,
             username=user.username,
             first_name=user.first_name,
-        )
-        logger.info("Created trial VPN key: user_id=%s", user.id)
-        keys = get_user_keys(user.id)
-        key_id = keys[0]["id"] if keys else None
-        add_bot_log(
-            "trial_key_created",
-            telegram_id=user.id,
-            username=user.username,
-            key_id=key_id,
-            message="Пробный VPN-ключ создан",
         )
 
         await callback.answer("Пробный доступ готов ✅", show_alert=True)
@@ -56,12 +50,7 @@ async def get_trial_handler(callback: CallbackQuery):
 
     except XUIError:
         logger.exception("XUI error during trial key creation: user_id=%s", user.id)
-        add_bot_log(
-            "key_issue_error",
-            telegram_id=user.id,
-            username=user.username,
-            message="Ошибка XUI при создании пробного ключа",
-        )
+        log_key_issue_error(user.id, user.username, "Ошибка XUI при создании пробного ключа")
         await callback.answer(
             "Не удалось выдать VPN-ключ. Попробуй позже или обратись в поддержку.",
             show_alert=True,
@@ -69,12 +58,7 @@ async def get_trial_handler(callback: CallbackQuery):
 
     except Exception:
         logger.exception("Unexpected trial key creation error: user_id=%s", user.id)
-        add_bot_log(
-            "key_issue_error",
-            telegram_id=user.id,
-            username=user.username,
-            message="Неожиданная ошибка при создании пробного ключа",
-        )
+        log_key_issue_error(user.id, user.username, "Неожиданная ошибка при создании пробного ключа")
         await callback.answer(
             "Что-то пошло не так 😕\n\nПопробуй ещё раз или обратись в поддержку.",
             show_alert=True,

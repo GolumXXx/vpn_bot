@@ -9,9 +9,6 @@ import qrcode
 
 from config import ADMIN_IDS
 from database.db import (
-    add_bot_log,
-    delete_key_completely,
-    extend_key_with_panel,
     get_active_keys_for_reminders,
     get_key_by_id,
     get_user,
@@ -22,6 +19,7 @@ from database.db import (
     parse_datetime,
     update_key_device_type,
 )
+from services.vpn_key_service import delete_key_by_admin, extend_user_key
 from services.short_links import create_short_link, resolve_vless_link
 from texts.common import GENERIC_ERROR_TEXT, VPN_KEY_READ_ERROR_TEXT
 from utils.rows import row_get
@@ -659,7 +657,12 @@ async def extend_key_handler(callback: CallbackQuery):
         return
 
     try:
-        await extend_key_with_panel(key_id, days)
+        updated_key = await extend_user_key(
+            key_id=key_id,
+            duration_days=days,
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username,
+        )
     except Exception:
         logger.exception(
             "Failed to extend VPN key: user_id=%s key_id=%s days=%s",
@@ -670,20 +673,6 @@ async def extend_key_handler(callback: CallbackQuery):
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
 
-    logger.info(
-        "Extended VPN key: user_id=%s key_id=%s days=%s",
-        callback.from_user.id,
-        key_id,
-        days,
-    )
-    updated_key = get_key_by_id(key_id)
-    add_bot_log(
-        "key_extended",
-        telegram_id=callback.from_user.id,
-        username=callback.from_user.username,
-        key_id=key_id,
-        message=f"Ключ продлён на {days} дней",
-    )
     await render_key_card(callback, updated_key, f"Подписка продлена на {days} дней")
 
 
@@ -700,10 +689,8 @@ async def delete_key_handler(callback: CallbackQuery):
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
 
-    key_before_delete = get_key_by_id(key_id)
-
     try:
-        success, message = await delete_key_completely(key_id)
+        result = await delete_key_by_admin(key_id, callback.from_user.id)
     except Exception:
         logger.exception(
             "Failed to delete VPN key: user_id=%s key_id=%s",
@@ -713,25 +700,17 @@ async def delete_key_handler(callback: CallbackQuery):
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
 
-    if not success:
+    if not result.success:
         logger.warning(
             "VPN key deletion rejected: user_id=%s key_id=%s message=%s",
             callback.from_user.id,
             key_id,
-            message,
+            result.message,
         )
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
 
     logger.info("Deleted VPN key: user_id=%s key_id=%s", callback.from_user.id, key_id)
-    target_user = get_user(row_get(key_before_delete, "telegram_id"))
-    add_bot_log(
-        "key_deleted_admin",
-        telegram_id=row_get(key_before_delete, "telegram_id"),
-        username=row_get(target_user, "username"),
-        key_id=key_id,
-        message=message or f"Ключ удалён админом {callback.from_user.id}",
-    )
     await render_keys_list(callback, "Ключ удалён ✅")
 
 

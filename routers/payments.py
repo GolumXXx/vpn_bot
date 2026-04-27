@@ -23,10 +23,7 @@ from database.db import (
     add_or_update_user,
     attach_manual_payment_receipt,
     cancel_pending_manual_payment,
-    create_paid_key,
-    extend_key_with_panel,
     get_latest_open_manual_payment,
-    get_latest_paid_key_by_tariff,
     get_manual_payment_by_order_id,
     get_user,
     mark_manual_payment_waiting_admin,
@@ -46,6 +43,7 @@ from keyboards import (
     renew_menu,
 )
 from routers.ui import safe_edit_text
+from services.payment_service import fulfill_paid_order
 from services.payment_providers import ManualPaymentProvider
 from services.xui_client import XUIError
 from texts.common import GENERIC_ERROR_TEXT, MAIN_MENU_TEXT, VPN_KEY_ISSUE_ERROR_TEXT
@@ -228,84 +226,6 @@ def get_user_manual_payment_status_alert(status: str | None) -> str:
     if status == MANUAL_PAYMENT_STATUS_CANCELLED:
         return "❌ Заявка отменена"
     return "Заявка недоступна"
-
-
-async def fulfill_paid_order(
-    telegram_id: int,
-    tariff_code: str,
-    username: str | None = None,
-    first_name: str | None = None,
-    order_id: str | None = None,
-) -> dict:
-    tariff = TARIFFS.get(tariff_code)
-    if not tariff:
-        raise ValueError(f"Unknown tariff code: {tariff_code}")
-
-    add_or_update_user(
-        telegram_id=telegram_id,
-        username=username,
-        first_name=first_name,
-    )
-
-    existing_key = get_latest_paid_key_by_tariff(telegram_id, tariff["name"])
-    if existing_key:
-        key_id = row_get(existing_key, "id")
-        if not key_id:
-            raise ValueError(f"Cannot extend key without id for user {telegram_id}")
-
-        new_expires = await extend_key_with_panel(key_id, tariff["days"])
-        logger.info(
-            "Extended paid VPN key after manual confirmation: user_id=%s tariff=%s key_id=%s expires_at=%s",
-            telegram_id,
-            tariff_code,
-            key_id,
-            new_expires,
-        )
-        add_bot_log(
-            "paid_key_extended",
-            telegram_id=telegram_id,
-            username=username,
-            key_id=key_id,
-            order_id=order_id,
-            message=f"Платный ключ продлён: тариф={tariff_code}, до={new_expires}",
-        )
-        return {
-            "action": "extended",
-            "expires_at": new_expires,
-            "tariff": tariff,
-            "key_id": key_id,
-        }
-
-    created_key = await create_paid_key(
-        telegram_id=telegram_id,
-        tariff_name=tariff["name"],
-        duration_days=tariff["days"],
-        username=username,
-        first_name=first_name,
-        traffic_limit_gb=0,
-        include_details=True,
-    )
-    key_id = row_get(created_key, "key_id")
-    logger.info(
-        "Created paid VPN key after manual confirmation: user_id=%s tariff=%s days=%s",
-        telegram_id,
-        tariff_code,
-        tariff["days"],
-    )
-    add_bot_log(
-        "paid_key_created",
-        telegram_id=telegram_id,
-        username=username,
-        key_id=key_id,
-        order_id=order_id,
-        message=f"Платный ключ создан: тариф={tariff_code}, дней={tariff['days']}",
-    )
-    return {
-        "action": "created",
-        "expires_at": None,
-        "tariff": tariff,
-        "key_id": key_id,
-    }
 
 
 async def send_receipt_to_admins(bot, user, payment, tariff: dict) -> int:
@@ -681,6 +601,7 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
         result = await fulfill_paid_order(
             telegram_id=telegram_id,
             tariff_code=tariff_code,
+            tariff=tariff,
             username=row_get(user, "username"),
             first_name=row_get(user, "first_name"),
             order_id=order_id,

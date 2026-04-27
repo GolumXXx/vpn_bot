@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from aiogram import F, Router
@@ -13,8 +12,6 @@ from database.db import (
     add_bot_log,
     cancel_pending_manual_payment,
     clear_bot_logs,
-    delete_key_completely,
-    extend_key_with_panel,
     get_admin_dashboard_stats,
     get_key_by_id,
     get_latest_bot_logs,
@@ -39,6 +36,8 @@ from keyboards import (
 from repositories.user_repo import get_all_telegram_ids
 from routers.payments import TARIFFS
 from routers.ui import safe_edit_text
+from services.admin_service import send_broadcast
+from services.vpn_key_service import delete_key_by_admin, extend_key_by_admin
 from utils.rows import row_get
 from utils.subscriptions import format_key_status
 
@@ -319,12 +318,7 @@ async def admin_broadcast_confirm_handler(callback: CallbackQuery, state: FSMCon
     await safe_edit_text(callback.message, "⏳ Отправляю рассылку...")
 
     users = get_broadcast_user_ids()
-    for user_id in users:
-        try:
-            await callback.bot.send_message(user_id, text)
-        except Exception:
-            pass
-        await asyncio.sleep(0.05)
+    await send_broadcast(callback.bot, users, text)
 
     add_bot_log(
         "admin_broadcast",
@@ -690,32 +684,21 @@ async def admin_extend_key_handler(callback: CallbackQuery):
         await callback.answer("Не удалось продлить ключ", show_alert=True)
         return
 
-    key = get_key_by_id(key_id)
-    if not key:
-        await callback.answer("Ключ не найден", show_alert=True)
-        return
-
     try:
-        new_expires = await extend_key_with_panel(key_id, 30)
+        result = await extend_key_by_admin(key_id, callback.from_user.id)
     except Exception:
         logger.exception("Failed to extend key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
         await callback.answer("Не удалось продлить ключ", show_alert=True)
         return
 
-    telegram_id = row_get(key, "telegram_id")
-    user = get_user(telegram_id)
-    add_bot_log(
-        "key_extended_admin",
-        telegram_id=telegram_id,
-        username=row_get(user, "username"),
-        key_id=key_id,
-        message=f"Ключ продлён админом {callback.from_user.id} до {new_expires}",
-    )
-    keys = get_user_keys(telegram_id)
+    if not result.success:
+        await callback.answer(result.message or "Ключ не найден", show_alert=True)
+        return
+
     await safe_edit_text(
         callback.message,
-        build_admin_user_keys_text(user, keys),
-        reply_markup=get_admin_user_keys_menu(keys),
+        build_admin_user_keys_text(result.user, result.keys),
+        reply_markup=get_admin_user_keys_menu(result.keys),
     )
     await callback.answer("Ключ продлён на 30 дней ✅", show_alert=True)
 
@@ -763,42 +746,27 @@ async def admin_delete_key_confirm_handler(callback: CallbackQuery):
         await callback.answer("Не удалось удалить ключ", show_alert=True)
         return
 
-    key = get_key_by_id(key_id)
-    if not key:
-        await callback.answer("Ключ не найден", show_alert=True)
-        return
-
-    telegram_id = row_get(key, "telegram_id")
     try:
-        success, message = await delete_key_completely(key_id)
+        result = await delete_key_by_admin(key_id, callback.from_user.id)
     except Exception:
         logger.exception("Failed to delete key from admin panel: admin_id=%s key_id=%s", callback.from_user.id, key_id)
         await callback.answer("Не удалось удалить ключ", show_alert=True)
         return
 
-    if not success:
+    if not result.success:
         logger.warning(
             "Admin key deletion rejected: admin_id=%s key_id=%s message=%s",
             callback.from_user.id,
             key_id,
-            message,
+            result.message,
         )
-        await callback.answer(message or "Не удалось удалить ключ", show_alert=True)
+        await callback.answer(result.message or "Не удалось удалить ключ", show_alert=True)
         return
 
-    user = get_user(telegram_id)
-    add_bot_log(
-        "key_deleted_admin",
-        telegram_id=telegram_id,
-        username=row_get(user, "username"),
-        key_id=key_id,
-        message=message or f"Ключ удалён админом {callback.from_user.id}",
-    )
-    keys = get_user_keys(telegram_id)
     await safe_edit_text(
         callback.message,
-        build_admin_user_keys_text(user, keys),
-        reply_markup=get_admin_user_keys_menu(keys),
+        build_admin_user_keys_text(result.user, result.keys),
+        reply_markup=get_admin_user_keys_menu(result.keys),
     )
     await callback.answer("Ключ удалён ✅", show_alert=True)
 
