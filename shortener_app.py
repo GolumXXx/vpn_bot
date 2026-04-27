@@ -103,12 +103,16 @@ def render_key_page(key: str) -> str:
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
     main {{
+      display: none;
       width: min(100%, 620px);
       padding: 28px;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--panel);
       box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+    }}
+    main.is-visible {{
+      display: block;
     }}
     h1 {{
       margin: 0 0 8px;
@@ -152,6 +156,14 @@ def render_key_page(key: str) -> str:
     button:hover {{
       background: var(--accent-hover);
     }}
+    .secondary {{
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }}
+    .secondary:hover {{
+      background: var(--panel-soft);
+    }}
     .status {{
       margin-top: 12px;
       min-height: 22px;
@@ -161,24 +173,44 @@ def render_key_page(key: str) -> str:
   </style>
 </head>
 <body>
-  <main>
-    <h1 id="title">Ключ скопирован</h1>
-    <p id="hint">VPN-ключ уже в буфере обмена. Если браузер запретил автокопирование, нажми кнопку ниже.</p>
+  <main id="fallback">
+    <h1 id="title">Открываем VPN</h1>
+    <p id="hint">Если приложение не открылось автоматически, нажми кнопку ниже или скопируй ключ вручную.</p>
     <textarea id="key" readonly spellcheck="false">{escaped_key}</textarea>
-    <button id="copyButton" type="button">Скопировать ещё раз</button>
+    <button id="openButton" type="button">Открыть VPN</button>
+    <button id="copyButton" class="secondary" type="button">Скопировать</button>
     <div id="status" class="status" aria-live="polite"></div>
   </main>
   <script>
     const key = {js_key};
+    const fallback = document.getElementById("fallback");
     const title = document.getElementById("title");
     const statusNode = document.getElementById("status");
     const keyNode = document.getElementById("key");
+    const openButton = document.getElementById("openButton");
     const copyButton = document.getElementById("copyButton");
+
+    function showFallback() {{
+      fallback.classList.add("is-visible");
+    }}
+
+    function openVpn() {{
+      if (!key) {{
+        title.textContent = "Ключ не найден";
+        statusNode.textContent = "Пустой ключ нельзя открыть.";
+        showFallback();
+        return false;
+      }}
+
+      window.location.href = key;
+      return true;
+    }}
 
     async function copyKey() {{
       if (!key) {{
         title.textContent = "Ключ не найден";
         statusNode.textContent = "Пустой ключ нельзя скопировать.";
+        showFallback();
         return false;
       }}
 
@@ -196,8 +228,12 @@ def render_key_page(key: str) -> str:
       }}
     }}
 
+    openButton.addEventListener("click", openVpn);
     copyButton.addEventListener("click", copyKey);
-    window.addEventListener("DOMContentLoaded", copyKey);
+    window.addEventListener("DOMContentLoaded", () => {{
+      openVpn();
+      setTimeout(showFallback, 1500);
+    }});
   </script>
 </body>
 </html>"""

@@ -86,6 +86,24 @@ def code_exists(conn, code: str) -> bool:
     return row is not None
 
 
+def find_existing_code(conn, vless_link: str) -> str | None:
+    value_expression = _link_select_expression(conn)
+    if not value_expression:
+        return None
+
+    row = conn.execute(
+        f"""
+        SELECT code
+        FROM links
+        WHERE {value_expression} = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (vless_link,),
+    ).fetchone()
+    return row["code"] if row else None
+
+
 def insert_short_link(conn, code: str, vless_link: str):
     columns = _table_columns(conn)
     created_at = _format_datetime(datetime.now())
@@ -189,6 +207,9 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
 
     with get_connection() as conn:
         init_short_links_schema(conn)
+        existing_code = find_existing_code(conn, vless_link.strip())
+        if existing_code:
+            return f"{short_base_url}/{existing_code}"
 
         for _ in range(50):
             code = generate_code()

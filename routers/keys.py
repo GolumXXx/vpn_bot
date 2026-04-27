@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 import qrcode
 
 from config import ADMIN_IDS
@@ -82,41 +82,21 @@ DEVICE_CONFIGS = {
             ("📲 Установить Happ", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
             ("📦 Скачать v2rayNG", "https://github.com/2dust/v2rayNG/releases"),
         ],
-        "steps": [
-            "Установи приложение",
-            "Скопируй ключ",
-            "Импортируй ключ в приложение",
-        ],
     },
     "ios": {
         "apps": [
             ("📲 Установить v2RayTun", "https://apps.apple.com/us/app/v2raytun/id6476628951"),
             ("📲 Установить Happ", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
         ],
-        "steps": [
-            "Установи приложение",
-            "Скопируй ключ",
-            "Добавь ключ в приложение",
-        ],
     },
     "windows": {
         "apps": [
             ("💻 Скачать v2rayN", "https://github.com/2dust/v2rayN/releases"),
         ],
-        "steps": [
-            "Скачай и открой приложение",
-            "Скопируй ключ",
-            "Импортируй ключ в приложение",
-        ],
     },
     "mac": {
         "apps": [
             ("💻 Скачать V2RayU", "https://github.com/yanue/V2rayU/releases"),
-        ],
-        "steps": [
-            "Скачай и открой приложение",
-            "Скопируй ключ",
-            "Добавь ключ в приложение",
         ],
     },
 }
@@ -363,20 +343,37 @@ def build_device_status_text(key) -> str:
     )
 
 
+def create_vpn_access_url(key) -> str | None:
+    key_id = row_get(key, "id")
+    vless_key = get_raw_vless_key(key)
+    if not vless_key:
+        return None
+
+    try:
+        short_url = create_short_link(vless_key, base_url=SHORT_LINK_BASE_URL)
+    except Exception:
+        logger.exception("Failed to create VPN access URL: key_id=%s", key_id)
+        return None
+
+    return short_url or None
+
+
 def get_subscription_keyboard(key=None):
     rows = []
     key_id = row_get(key, "id")
 
     if key_id:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="🚀 Подключить VPN",
-                    callback_data=f"connect_key_{key_id}",
-                )
-            ]
-        )
         if is_subscription_active(key):
+            short_url = create_vpn_access_url(key)
+            if short_url:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text="🚀 Подключить VPN",
+                            url=short_url,
+                        )
+                    ]
+                )
             rows.append(
                 [
                     InlineKeyboardButton(
@@ -388,16 +385,17 @@ def get_subscription_keyboard(key=None):
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="📋 Скопировать ключ",
-                        callback_data=f"copy_key_{key_id}",
+                        text="📱 Установить приложение",
+                        callback_data=f"install_app_{key_id}",
                     )
                 ]
             )
+        else:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="➕ Добавить устройство (платно)",
-                        callback_data="add_device_soon",
+                        text="🚀 Продлить VPN",
+                        callback_data="renew_sub",
                     )
                 ]
             )
@@ -445,7 +443,6 @@ def get_device_select_keyboard(key):
 
 def get_connect_app_keyboard(key, device_code):
     key_id = row_get(key, "id", 0)
-    vless_key = get_raw_vless_key(key)
     device_config = DEVICE_CONFIGS.get(device_code, {})
     app_buttons = [
         [InlineKeyboardButton(text=title, url=url)]
@@ -453,21 +450,11 @@ def get_connect_app_keyboard(key, device_code):
     ]
     rows = [*app_buttons]
 
-    if vless_key:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="📋 Скопировать ключ",
-                    copy_text=CopyTextButton(text=vless_key),
-                )
-            ]
-        )
-
     rows.append(
         [
             InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"connect_key_{key_id}"
+                callback_data=f"view_key_{key_id}",
             )
         ]
     )
@@ -477,16 +464,11 @@ def get_connect_app_keyboard(key, device_code):
 
 def build_device_connect_text(device_code, key) -> str:
     device_title = DEVICE_TITLES.get(device_code, "📱 Устройство")
-    steps = DEVICE_CONFIGS.get(device_code, {}).get("steps", [])
-    instruction = "\n".join(
-        f"{index}. {step}"
-        for index, step in enumerate(steps, start=1)
-    )
 
     return (
         f"{device_title}\n\n"
-        f"{instruction}\n\n"
-        "Готово 🚀"
+        "Выбери приложение для установки.\n\n"
+        "После установки вернись на экран VPN и нажми «Подключить VPN»."
     )
 
 
@@ -816,9 +798,25 @@ async def connect_key_handler(callback: CallbackQuery):
         await callback.answer(connect_error, show_alert=True)
         return
 
+    await render_key_card(callback, key, "Нажми «Подключить VPN»")
+
+
+@router.callback_query(F.data.startswith("install_app_"))
+async def install_app_handler(callback: CallbackQuery):
+    key_id = parse_callback_int(callback.data, "install_app_")
+    if key_id is None:
+        logger.warning("Invalid install_app callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
+        await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
+        return
+
+    key, error = get_owned_key(key_id, callback.from_user.id)
+    if error:
+        await callback.answer(error, show_alert=True)
+        return
+
     await safe_edit_text(
         callback,
-        "📲 Подключение VPN\n\n"
+        "📱 Установить приложение\n\n"
         "Выбери устройство:",
         reply_markup=get_device_select_keyboard(key),
     )
@@ -868,48 +866,7 @@ async def copy_key_handler(callback: CallbackQuery):
         await callback.answer(error, show_alert=True)
         return
 
-    vless_key = get_raw_vless_key(key)
-    if not vless_key:
-        await callback.answer("Не удалось получить ключ", show_alert=True)
-        return
-
-    try:
-        short_url = create_short_link(vless_key, base_url=SHORT_LINK_BASE_URL)
-    except Exception:
-        logger.exception(
-            "Failed to create short VPN link: user_id=%s key_id=%s",
-            callback.from_user.id,
-            key_id,
-        )
-        await callback.answer("Ошибка создания ссылки", show_alert=True)
-        return
-
-    if not short_url:
-        logger.error(
-            "Short VPN link is empty: user_id=%s key_id=%s",
-            callback.from_user.id,
-            key_id,
-        )
-        await callback.answer("Ошибка создания ссылки", show_alert=True)
-        return
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Скопировать ключ",
-                    url=short_url,
-                )
-            ]
-        ]
-    )
-
-    await callback.message.answer(
-        f"Ваш доступ к VPN:\n{short_url}",
-        reply_markup=keyboard,
-        disable_web_page_preview=True,
-    )
-    await callback.answer()
+    await render_key_card(callback, key, "Копирование больше не нужно")
 
 
 @router.callback_query(F.data == "add_device_soon")
