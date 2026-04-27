@@ -21,11 +21,13 @@ def get_connection():
     return conn
 
 
-def get_link_column(conn) -> str | None:
+def get_link_select_expression(conn) -> str | None:
     columns = {
         row["name"]
         for row in conn.execute("PRAGMA table_info(links)").fetchall()
     }
+    if "url" in columns and "vless" in columns:
+        return "COALESCE(url, vless)"
     if "url" in columns:
         return "url"
     if "vless" in columns:
@@ -39,12 +41,12 @@ def find_key_by_code(code: str) -> str | None:
 
     try:
         with get_connection() as conn:
-            column = get_link_column(conn)
-            if not column:
+            value_expression = get_link_select_expression(conn)
+            if not value_expression:
                 return None
 
             row = conn.execute(
-                f"SELECT {column} FROM links WHERE code = ? LIMIT 1",
+                f"SELECT {value_expression} AS url FROM links WHERE code = ? LIMIT 1",
                 (code,),
             ).fetchone()
     except sqlite3.Error:
@@ -53,7 +55,7 @@ def find_key_by_code(code: str) -> str | None:
     if not row:
         return None
 
-    key = row[column]
+    key = row["url"]
     if not key:
         return None
 
