@@ -21,6 +21,7 @@ MANUAL_PAYMENT_STATUS_REPLACED = "replaced"
 MANUAL_PAYMENT_STATUS_CANCELLED = "cancelled"
 VALID_DEVICE_TYPES = {"ios", "android", "windows", "mac"}
 BOT_LOG_MESSAGE_MAX_LENGTH = 500
+ORDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{8}$")
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +77,10 @@ def _sanitize_bot_log_message(message):
     return text
 
 
+def _is_valid_order_id(order_id) -> bool:
+    return bool(order_id and ORDER_ID_PATTERN.fullmatch(str(order_id).strip()))
+
+
 def _upsert_user(conn, telegram_id, username, first_name):
     conn.execute(
         """
@@ -106,7 +111,7 @@ def _insert_vpn_key(
     expires = now + timedelta(days=duration_days)
     traffic_limit_bytes = traffic_limit_gb * 1024 * 1024 * 1024 if traffic_limit_gb > 0 else 0
 
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO vpn_keys (
             telegram_id,
@@ -142,7 +147,7 @@ def _insert_vpn_key(
         ),
     )
 
-    return expires
+    return cursor.lastrowid, expires
 
 
 async def _issue_key(
@@ -153,6 +158,7 @@ async def _issue_key(
     first_name=None,
     traffic_limit_gb=0,
     is_trial=False,
+    include_details=False,
 ):
     add_or_update_user(telegram_id, username, first_name)
 
@@ -189,7 +195,7 @@ async def _issue_key(
 
         try:
             with get_connection() as conn:
-                _insert_vpn_key(
+                key_id, expires = _insert_vpn_key(
                     conn=conn,
                     telegram_id=telegram_id,
                     key_name=key_name,
@@ -234,6 +240,14 @@ async def _issue_key(
             result["uuid"][:8],
             bool(is_trial),
         )
+
+        if include_details:
+            return {
+                "key_id": key_id,
+                "key_value": vless_link,
+                "expires_at": _format_datetime(expires),
+                "client_uuid": result["uuid"],
+            }
 
         return vless_link
     finally:
@@ -359,6 +373,9 @@ def create_manual_payment(telegram_id, tariff_code):
 
 
 def get_manual_payment_by_order_id(order_id):
+    if not _is_valid_order_id(order_id):
+        return None
+
     return _fetchone(
         """
         SELECT *
@@ -424,6 +441,9 @@ def get_latest_open_manual_payment(telegram_id):
 
 
 def mark_manual_payment_waiting_admin(order_id, user_message_id=None):
+    if not _is_valid_order_id(order_id):
+        return False
+
     now = _format_datetime(_now())
     with get_connection() as conn:
         cursor = conn.execute(
@@ -447,6 +467,9 @@ def mark_manual_payment_waiting_admin(order_id, user_message_id=None):
 
 
 def reset_manual_payment_waiting_admin(order_id):
+    if not _is_valid_order_id(order_id):
+        return
+
     now = _format_datetime(_now())
     _execute(
         """
@@ -466,6 +489,9 @@ def reset_manual_payment_waiting_admin(order_id):
 
 
 def cancel_pending_manual_payment(order_id):
+    if not _is_valid_order_id(order_id):
+        return False
+
     now = _format_datetime(_now())
     with get_connection() as conn:
         cursor = conn.execute(
@@ -489,6 +515,9 @@ def cancel_pending_manual_payment(order_id):
 
 
 def mark_manual_payment_reminded(order_id):
+    if not _is_valid_order_id(order_id):
+        return False
+
     now = _format_datetime(_now())
     with get_connection() as conn:
         cursor = conn.execute(
@@ -511,6 +540,9 @@ def mark_manual_payment_reminded(order_id):
 
 
 def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=None, user_message_id=None):
+    if not _is_valid_order_id(order_id):
+        return
+
     now = _format_datetime(_now())
     _execute(
         """
@@ -537,6 +569,9 @@ def attach_manual_payment_receipt(order_id, receipt_file_id, receipt_unique_id=N
 
 
 def start_manual_payment_processing(order_id, admin_id):
+    if not _is_valid_order_id(order_id):
+        return False
+
     now = _format_datetime(_now())
     with get_connection() as conn:
         cursor = conn.execute(
@@ -561,6 +596,9 @@ def start_manual_payment_processing(order_id, admin_id):
 
 
 def reopen_manual_payment(order_id):
+    if not _is_valid_order_id(order_id):
+        return
+
     now = _format_datetime(_now())
     _execute(
         """
@@ -581,24 +619,31 @@ def reopen_manual_payment(order_id):
 
 
 def mark_manual_payment_approved(order_id, admin_id):
+    if not _is_valid_order_id(order_id):
+        return False
+
     now = _format_datetime(_now())
-    _execute(
-        """
-        UPDATE manual_payments
-        SET status = ?,
-            approved_by = ?,
-            approved_at = ?,
-            updated_at = ?
-        WHERE order_id = ?
-        """,
-        (
-            MANUAL_PAYMENT_STATUS_APPROVED,
-            admin_id,
-            now,
-            now,
-            order_id,
-        ),
-    )
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE manual_payments
+            SET status = ?,
+                approved_by = ?,
+                approved_at = ?,
+                updated_at = ?
+            WHERE order_id = ?
+              AND status = ?
+            """,
+            (
+                MANUAL_PAYMENT_STATUS_APPROVED,
+                admin_id,
+                now,
+                now,
+                order_id,
+                MANUAL_PAYMENT_STATUS_PROCESSING,
+            ),
+        )
+        return cursor.rowcount > 0
 
 
 def reserve_trial_usage(telegram_id) -> bool:
@@ -699,6 +744,7 @@ async def create_paid_key(
     username=None,
     first_name=None,
     traffic_limit_gb=0,
+    include_details=False,
 ):
     return await _issue_key(
         telegram_id=telegram_id,
@@ -708,6 +754,7 @@ async def create_paid_key(
         first_name=first_name,
         traffic_limit_gb=traffic_limit_gb,
         is_trial=False,
+        include_details=include_details,
     )
 
 

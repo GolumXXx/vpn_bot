@@ -29,7 +29,6 @@ from database.db import (
     get_latest_paid_key_by_tariff,
     get_manual_payment_by_order_id,
     get_user,
-    get_user_keys,
     mark_manual_payment_waiting_admin,
     mark_manual_payment_approved,
     reopen_manual_payment,
@@ -273,16 +272,16 @@ async def fulfill_paid_order(
             "key_id": key_id,
         }
 
-    await create_paid_key(
+    created_key = await create_paid_key(
         telegram_id=telegram_id,
         tariff_name=tariff["name"],
         duration_days=tariff["days"],
         username=username,
         first_name=first_name,
         traffic_limit_gb=0,
+        include_details=True,
     )
-    keys = get_user_keys(telegram_id)
-    key_id = row_get(keys[0], "id") if keys else None
+    key_id = row_get(created_key, "key_id")
     logger.info(
         "Created paid VPN key after manual confirmation: user_id=%s tariff=%s days=%s",
         telegram_id,
@@ -680,7 +679,13 @@ async def approve_manual_payment_handler(callback: CallbackQuery):
             first_name=row_get(user, "first_name"),
             order_id=order_id,
         )
-        mark_manual_payment_approved(order_id, callback.from_user.id)
+        if not mark_manual_payment_approved(order_id, callback.from_user.id):
+            payment = get_manual_payment_by_order_id(order_id)
+            await callback.answer(
+                get_manual_payment_status_alert(row_get(payment, "status")),
+                show_alert=True,
+            )
+            return
         add_bot_log(
             "payment_approved",
             telegram_id=telegram_id,

@@ -4,7 +4,9 @@ import json
 import logging
 import time
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+
+from config import PANEL_LOGIN, PANEL_PASSWORD, PANEL_PATH, PANEL_URL
 
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,22 @@ class XUIError(Exception):
     pass
 
 
+def _build_panel_base_url() -> str:
+    if not PANEL_URL:
+        raise XUIError("PANEL_URL не настроен")
+
+    parsed_url = urlparse(PANEL_URL)
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+        raise XUIError("PANEL_URL должен содержать http(s)://host:port")
+
+    base_url = PANEL_URL.rstrip("/")
+    panel_path = (PANEL_PATH or "").strip()
+    if panel_path and not panel_path.startswith("/"):
+        panel_path = f"/{panel_path}"
+
+    return f"{base_url}{panel_path.rstrip('/')}"
+
+
 class XUIClient:
     def __init__(self, server: dict):
         self.server = server
@@ -21,17 +39,16 @@ class XUIClient:
         self.port = server["port"]
         self.protocol = server.get("protocol", "https")
 
-        path = server.get("web_base_path", "").strip("/")
-        path = f"/{path}" if path else ""
-
-        self.base_url = f"{self.protocol}://{self.host}:{self.port}{path}"
+        self.base_url = _build_panel_base_url()
+        self.panel_login = PANEL_LOGIN or server["login"]
+        self.panel_password = PANEL_PASSWORD or server["password"]
         self.session = None
         self.is_authenticated = False
         self._inbounds_cache = None
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
-            connector = aiohttp.TCPConnector(ssl=False)
+            connector = aiohttp.TCPConnector()
             jar = aiohttp.CookieJar(unsafe=True)
             timeout = aiohttp.ClientTimeout(total=15)
 
@@ -80,8 +97,8 @@ class XUIClient:
         session = await self._ensure_session()
 
         data = {
-            "username": self.server["login"],
-            "password": self.server["password"],
+            "username": self.panel_login,
+            "password": self.panel_password,
         }
 
         login_url = f"{self.base_url}/login"

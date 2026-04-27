@@ -49,7 +49,7 @@ async def main():
     init_db()
     logger.info("Database initialized")
     reminder_task = asyncio.create_task(reminder_loop())
-    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.delete_webhook(drop_pending_updates=False)
     logger.info("Webhook cleared, polling started")
     try:
         await dp.start_polling(bot)
