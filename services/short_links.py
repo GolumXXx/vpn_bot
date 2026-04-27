@@ -1,18 +1,13 @@
-import os
 import secrets
 import sqlite3
 from datetime import datetime
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
-
-from database.connection import BASE_DIR, DATETIME_FORMAT, get_connection
+from config import SHORT_LINK_BASE_URL
+from database.connection import DATETIME_FORMAT, get_connection
 
 SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 SHORT_CODE_LENGTH = 8
-
-
-load_dotenv(BASE_DIR / ".env")
 
 
 def init_short_links_schema(conn):
@@ -195,7 +190,7 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
         raise ValueError("vless_link не может быть пустым")
 
     normalized_base_url = _normalize_base_url(
-        base_url or os.getenv("SHORT_LINK_BASE_URL")
+        base_url or SHORT_LINK_BASE_URL
     )
     if not normalized_base_url:
         return vless_link

@@ -7,11 +7,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
+from config import SHORTENER_PUBLIC_BASE_URL
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bot.db"
 CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-PUBLIC_BASE_URL = "https://golum.shop"
+PUBLIC_BASE_URL = SHORTENER_PUBLIC_BASE_URL
 
 app = FastAPI()
 
@@ -65,7 +67,7 @@ def find_key_by_code(code: str) -> str | None:
 
 def render_key_page(key: str, code: str) -> str:
     escaped_key = html.escape(key, quote=True)
-    browser_url = f"{PUBLIC_BASE_URL}/s/{code}"
+    browser_url = f"{PUBLIC_BASE_URL}/s/{code}" if PUBLIC_BASE_URL else f"/s/{code}"
     escaped_browser_url = html.escape(browser_url, quote=True)
     js_key = (
         json.dumps(key)

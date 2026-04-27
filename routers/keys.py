@@ -7,7 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 import qrcode
 
-from config import ADMIN_IDS
+from config import ADMIN_IDS, SHORT_LINK_BASE_URL
 from database.db import (
     get_active_keys_for_reminders,
     get_key_by_id,
@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 ADMIN_ID_SET = set(ADMIN_IDS)
 
 VPN_KEY_ERROR_TEXT = VPN_KEY_READ_ERROR_TEXT
-SHORT_LINK_BASE_URL = "http://golum.shop"
 
 REMINDER_INTERVAL_SECONDS = 10 * 60
 ONE_DAY_REMINDER_TEXT = (

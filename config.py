@@ -17,6 +17,7 @@ ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "your_support_username")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "your_bot_username")
 SHORT_LINK_BASE_URL = _clean_env_value("SHORT_LINK_BASE_URL")
+SHORTENER_PUBLIC_BASE_URL = _clean_env_value("SHORTENER_PUBLIC_BASE_URL") or SHORT_LINK_BASE_URL
 PANEL_URL = _clean_env_value("PANEL_URL")
 PANEL_PATH = _clean_env_value("PANEL_PATH")
 PANEL_LOGIN = _clean_env_value("PANEL_LOGIN")
