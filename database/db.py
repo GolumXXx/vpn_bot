@@ -700,15 +700,6 @@ def update_key_expiry_in_db(key_id, new_expires):
     return new_expires_str
 
 
-def extend_key(key_id, duration_days):
-    key = get_key_by_id(key_id)
-    if not key:
-        return None
-
-    new_expires = calculate_extended_expiry(key, duration_days)
-    return update_key_expiry_in_db(key_id, new_expires)
-
-
 async def extend_key_with_panel(key_id, duration_days):
     key = get_key_by_id(key_id)
     if not key:
@@ -923,17 +914,6 @@ def init_db():
         _add_column_if_missing(conn, "manual_payments", "cancelled_at", "TEXT")
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS link_clicks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT NOT NULL,
-                ip TEXT,
-                user_agent TEXT,
-                clicked_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
             CREATE INDEX IF NOT EXISTS idx_vpn_keys_telegram_id
             ON vpn_keys (telegram_id)
             """
@@ -1024,36 +1004,6 @@ def is_key_active(key):
         return False
 
     return bool(key["is_active"])
-
-
-def count_user_keys(telegram_id):
-    row = _fetchone(
-        """
-        SELECT COUNT(*)
-        FROM vpn_keys
-        WHERE telegram_id = ?
-        """,
-        (telegram_id,),
-    )
-    return row[0]
-
-
-def count_active_user_keys(telegram_id):
-    row = _fetchone(
-        """
-        SELECT COUNT(*)
-        FROM vpn_keys
-        WHERE telegram_id = ?
-          AND is_active = 1
-          AND (
-              expires_at IS NULL
-              OR expires_at = ''
-              OR expires_at > ?
-          )
-        """,
-        (telegram_id, _format_datetime(_now())),
-    )
-    return row[0]
 
 
 def get_user_key_stats(telegram_id):

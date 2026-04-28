@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
 from keyboards import help_menu
-from routers.ui import safe_edit_text
+from utils.telegram import safe_edit_text
 
 router = Router()
 

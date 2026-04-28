@@ -5,10 +5,8 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
-from config import ADMIN_IDS, SUPPORT_USERNAME
-
-
-ADMIN_ID_SET = set(ADMIN_IDS)
+from config import SUPPORT_USERNAME
+from utils.admin import is_admin
 
 
 def _build_support_url() -> str:
@@ -34,7 +32,7 @@ def get_main_inline_menu(user_id: int | None = None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🛟 Поддержка", callback_data="help")],
     ]
 
-    if user_id in ADMIN_ID_SET:
+    if is_admin(user_id):
         rows.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_menu")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)

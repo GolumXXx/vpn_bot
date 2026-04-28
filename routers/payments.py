@@ -4,12 +4,12 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from config import (
-    ADMIN_IDS,
     MANUAL_PAYMENT_URL,
     PAYMENT_URL_1M,
     PAYMENT_URL_3M,
     PAYMENT_URL_6M,
 )
+from core.tariffs import TARIFFS
 from database.db import (
     MANUAL_PAYMENT_STATUS_APPROVED,
     MANUAL_PAYMENT_STATUS_CANCELLED,
@@ -42,23 +42,18 @@ from keyboards import (
     payment_done_menu,
     renew_menu,
 )
-from routers.ui import safe_edit_text
 from services.payment_service import fulfill_paid_order
 from services.payment_providers import ManualPaymentProvider
 from services.xui_client import XUIError
 from texts.common import GENERIC_ERROR_TEXT, MAIN_MENU_TEXT, VPN_KEY_ISSUE_ERROR_TEXT
+from utils.admin import ADMIN_IDS, is_admin
+from utils.callbacks import parse_callback
 from utils.rows import row_get
+from utils.telegram import safe_edit_text
 
 
 router = Router()
 logger = logging.getLogger(__name__)
-ADMIN_ID_SET = set(ADMIN_IDS)
-
-TARIFFS = {
-    "1m": {"name": "VPN на 1 месяц", "days": 30, "price": 89, "label": "1 месяц"},
-    "3m": {"name": "VPN на 3 месяца", "days": 90, "price": 269, "label": "3 месяца"},
-    "6m": {"name": "VPN на 6 месяцев", "days": 180, "price": 549, "label": "6 месяцев"},
-}
 PAYMENT_URLS = {
     "1m": PAYMENT_URL_1M or MANUAL_PAYMENT_URL,
     "3m": PAYMENT_URL_3M or MANUAL_PAYMENT_URL,
@@ -237,7 +232,7 @@ async def send_receipt_to_admins(bot, user, payment, tariff: dict) -> int:
     sent_count = 0
     caption = build_admin_receipt_text(payment, tariff, user)
 
-    for admin_id in ADMIN_ID_SET:
+    for admin_id in ADMIN_IDS:
         try:
             await bot.send_photo(
                 chat_id=admin_id,
@@ -307,7 +302,7 @@ async def tariff_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("pay_"))
 async def process_payment(callback: CallbackQuery):
-    if not ADMIN_ID_SET:
+    if not ADMIN_IDS:
         logger.error("Manual payment requested but ADMIN_IDS are not configured")
         await callback.answer(MANUAL_PAYMENT_UNAVAILABLE_TEXT, show_alert=True)
         return
@@ -370,9 +365,8 @@ async def process_payment(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("cancel_manual_payment:"))
 async def cancel_manual_payment_handler(callback: CallbackQuery):
-    try:
-        order_id = callback.data.split(":", maxsplit=1)[1].strip()
-    except (AttributeError, IndexError):
+    parts = parse_callback(callback.data)
+    if len(parts) < 2:
         logger.warning(
             "Invalid manual payment cancel callback: data=%s user_id=%s",
             callback.data,
@@ -380,6 +374,7 @@ async def cancel_manual_payment_handler(callback: CallbackQuery):
         )
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
+    order_id = parts[1]
 
     payment = get_manual_payment_by_order_id(order_id)
     if not payment or row_get(payment, "telegram_id") != callback.from_user.id:
@@ -408,9 +403,8 @@ async def cancel_manual_payment_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("manual_payment_paid:"))
 async def manual_payment_paid_handler(callback: CallbackQuery):
-    try:
-        order_id = callback.data.split(":", maxsplit=1)[1].strip()
-    except (AttributeError, IndexError):
+    parts = parse_callback(callback.data)
+    if len(parts) < 2:
         logger.warning(
             "Invalid manual payment paid callback: data=%s user_id=%s",
             callback.data,
@@ -418,6 +412,7 @@ async def manual_payment_paid_handler(callback: CallbackQuery):
         )
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
+    order_id = parts[1]
 
     payment = get_manual_payment_by_order_id(order_id)
     if not payment or row_get(payment, "telegram_id") != callback.from_user.id:
@@ -560,16 +555,16 @@ async def receipt_photo_handler(message: Message):
 
 @router.callback_query(F.data.startswith("approve_manual_payment:"))
 async def approve_manual_payment_handler(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_ID_SET:
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    try:
-        order_id = callback.data.split(":", maxsplit=1)[1].strip()
-    except (AttributeError, IndexError):
+    parts = parse_callback(callback.data)
+    if len(parts) < 2:
         logger.warning("Invalid manual payment approval callback: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
+    order_id = parts[1]
 
     payment = get_manual_payment_by_order_id(order_id)
     if not payment:

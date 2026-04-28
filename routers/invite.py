@@ -3,7 +3,7 @@ from aiogram.types import CallbackQuery
 
 from config import BOT_USERNAME
 from keyboards import invite_menu
-from routers.ui import safe_edit_text
+from utils.telegram import safe_edit_text
 
 router = Router()
 

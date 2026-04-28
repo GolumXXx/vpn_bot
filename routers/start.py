@@ -4,8 +4,8 @@ from aiogram.types import Message, CallbackQuery
 
 from database.db import add_or_update_user
 from keyboards import get_main_inline_menu, reply_menu
-from routers.ui import safe_edit_text
 from texts.common import MAIN_MENU_TEXT, WELCOME_TEXT
+from utils.telegram import safe_edit_text
 
 router = Router()
 

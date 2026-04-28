@@ -4,13 +4,13 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
 from keyboards import trial_menu
-from routers.ui import safe_edit_text
 from services.vpn_key_service import (
     TrialAlreadyUsedError,
     create_trial_subscription,
     log_key_issue_error,
 )
 from services.xui_client import XUIError
+from utils.telegram import safe_edit_text
 
 router = Router()
 logger = logging.getLogger(__name__)

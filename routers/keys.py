@@ -7,7 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 import qrcode
 
-from config import ADMIN_IDS, SHORT_LINK_BASE_URL
+from config import SHORT_LINK_BASE_URL
 from database.db import (
     get_active_keys_for_reminders,
     get_key_by_id,
@@ -22,13 +22,14 @@ from database.db import (
 from services.vpn_key_service import delete_key_by_admin, extend_user_key
 from services.short_links import create_short_link, resolve_vless_link
 from texts.common import GENERIC_ERROR_TEXT, VPN_KEY_READ_ERROR_TEXT
+from utils.admin import is_admin
+from utils.callbacks import parse_callback, parse_callback_int
 from utils.rows import row_get
 from utils.telegram import safe_edit_text
 
 
 router = Router()
 logger = logging.getLogger(__name__)
-ADMIN_ID_SET = set(ADMIN_IDS)
 
 VPN_KEY_ERROR_TEXT = VPN_KEY_READ_ERROR_TEXT
 
@@ -122,16 +123,6 @@ def is_subscription_active(key) -> bool:
         return is_key_active(key)
     except (IndexError, KeyError, TypeError, ValueError):
         return False
-
-
-def parse_callback_int(data: str | None, prefix: str) -> int | None:
-    if not data or not data.startswith(prefix):
-        return None
-
-    try:
-        return int(data.removeprefix(prefix))
-    except ValueError:
-        return None
 
 
 def get_raw_vless_key(key) -> str | None:
@@ -286,50 +277,9 @@ def get_last_online_value(key) -> int | None:
     return parse_int_value(first_row_value(key, ("lastOnline", "last_online")))
 
 
-def format_last_online_text(key) -> str:
-    last_online = get_last_online_value(key)
-    if not last_online or last_online <= 0:
-        return "нет данных"
-
-    if last_online > 10_000_000_000:
-        last_online = last_online // 1000
-
-    try:
-        return datetime.fromtimestamp(last_online).strftime("%d.%m.%Y %H:%M")
-    except (OSError, OverflowError, ValueError):
-        return "нет данных"
-
-
 def get_used_devices_count(key) -> int:
     last_online = get_last_online_value(key)
     return 1 if last_online and last_online > 0 else 0
-
-
-def format_bytes(value) -> str:
-    byte_count = parse_int_value(value)
-    if not byte_count or byte_count <= 0:
-        return "0 MB"
-
-    mb = byte_count / (1024 * 1024)
-    if mb < 1024:
-        return f"{mb:.1f} MB" if mb < 10 else f"{mb:.0f} MB"
-
-    gb = mb / 1024
-    return f"{gb:.1f} GB" if gb < 10 else f"{gb:.0f} GB"
-
-
-def format_traffic_text(key) -> str:
-    traffic_used = parse_int_value(row_get(key, "traffic_used"))
-    if traffic_used is not None:
-        return format_bytes(traffic_used)
-
-    up = parse_int_value(row_get(key, "up")) or 0
-    down = parse_int_value(row_get(key, "down")) or 0
-    if up or down:
-        return format_bytes(up + down)
-
-    total = first_row_value(key, ("traffic", "total", "used_traffic"))
-    return format_bytes(total)
 
 
 def build_device_status_text(key) -> str:
@@ -468,9 +418,6 @@ def build_device_connect_text(device_code, key) -> str:
         "После установки вернись на экран VPN и нажми «Подключить VPN»."
     )
 
-
-def format_subscription_type(key) -> str:
-    return "trial" if row_get(key, "is_trial") else "paid"
 
 def get_subscription_status_text(key: dict) -> str:
     if not key:
@@ -638,7 +585,7 @@ async def refresh_key_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("extend_key:"))
 async def extend_key_handler(callback: CallbackQuery):
     try:
-        _, key_id_str, days_str = callback.data.split(":")
+        _, key_id_str, days_str = parse_callback(callback.data)
         key_id = int(key_id_str)
         days = int(days_str)
     except (AttributeError, ValueError):
@@ -677,13 +624,12 @@ async def extend_key_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delete_key_confirm:"))
 async def delete_key_handler(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_ID_SET:
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":")[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid delete_key_confirm callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
@@ -715,13 +661,12 @@ async def delete_key_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delete_key:"))
 async def confirm_delete_key_handler(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_ID_SET:
+    if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":")[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid delete_key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer(GENERIC_ERROR_TEXT, show_alert=True)
         return
@@ -855,7 +800,7 @@ async def add_device_soon_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("device_"))
 async def device_handler(callback: CallbackQuery):
     try:
-        device_part, key_id_str = callback.data.split(":", maxsplit=1)
+        device_part, key_id_str = parse_callback(callback.data)
         key_id = int(key_id_str)
     except (ValueError, AttributeError):
         logger.warning("Invalid device callback data: data=%s user_id=%s", callback.data, callback.from_user.id)

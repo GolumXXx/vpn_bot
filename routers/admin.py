@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from config import ADMIN_IDS
+from core.tariffs import TARIFFS
 from database.db import (
     MANUAL_PAYMENT_STATUS_PENDING,
     add_bot_log,
@@ -34,17 +34,17 @@ from keyboards import (
     get_admin_user_keys_menu,
 )
 from repositories.user_repo import get_all_telegram_ids
-from routers.payments import TARIFFS
-from routers.ui import safe_edit_text
 from services.admin_service import send_broadcast
 from services.vpn_key_service import delete_key_by_admin, extend_key_by_admin
+from utils.admin import is_admin
+from utils.callbacks import parse_callback, parse_callback_int
 from utils.rows import row_get
 from utils.subscriptions import format_key_status
+from utils.telegram import safe_edit_text
 
 
 router = Router()
 logger = logging.getLogger(__name__)
-ADMIN_ID_SET = set(ADMIN_IDS)
 WAITING_SEARCH_ADMINS = set()
 WAITING_KEY_SEARCH_ADMINS = set()
 
@@ -56,10 +56,6 @@ ADMIN_MENU_TEXT = (
 
 class BroadcastState(StatesGroup):
     waiting_text = State()
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_ID_SET
 
 
 def clear_admin_waiting_state(user_id: int):
@@ -424,12 +420,12 @@ async def admin_remind_payment_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        order_id = callback.data.split(":", maxsplit=1)[1].strip()
-    except (AttributeError, IndexError):
+    parts = parse_callback(callback.data)
+    if len(parts) < 2:
         logger.warning("Invalid admin remind payment callback: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось отправить напоминание", show_alert=True)
         return
+    order_id = parts[1]
 
     payment = get_manual_payment_by_order_id(order_id)
     if not payment:
@@ -471,12 +467,12 @@ async def admin_cancel_payment_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        order_id = callback.data.split(":", maxsplit=1)[1].strip()
-    except (AttributeError, IndexError):
+    parts = parse_callback(callback.data)
+    if len(parts) < 2:
         logger.warning("Invalid admin cancel payment callback: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось отменить заявку", show_alert=True)
         return
+    order_id = parts[1]
 
     payment = get_manual_payment_by_order_id(order_id)
     if not payment:
@@ -537,9 +533,8 @@ async def admin_user_keys_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        telegram_id = int(callback.data.split(":", maxsplit=1)[1])
-    except (AttributeError, IndexError, ValueError):
+    telegram_id = parse_callback_int(callback.data)
+    if telegram_id is None:
         logger.warning("Invalid admin user keys callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось открыть пользователя", show_alert=True)
         return
@@ -648,9 +643,8 @@ async def admin_key_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":", maxsplit=1)[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid admin key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось открыть ключ", show_alert=True)
         return
@@ -677,9 +671,8 @@ async def admin_extend_key_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":", maxsplit=1)[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid admin extend key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось продлить ключ", show_alert=True)
         return
@@ -709,9 +702,8 @@ async def admin_delete_key_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":", maxsplit=1)[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid admin delete key callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось удалить ключ", show_alert=True)
         return
@@ -739,9 +731,8 @@ async def admin_delete_key_confirm_handler(callback: CallbackQuery):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    try:
-        key_id = int(callback.data.split(":", maxsplit=1)[1])
-    except (AttributeError, IndexError, ValueError):
+    key_id = parse_callback_int(callback.data)
+    if key_id is None:
         logger.warning("Invalid admin delete key confirm callback data: data=%s user_id=%s", callback.data, callback.from_user.id)
         await callback.answer("Не удалось удалить ключ", show_alert=True)
         return

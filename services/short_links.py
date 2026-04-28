@@ -69,10 +69,6 @@ def generate_code(length: int = SHORT_CODE_LENGTH) -> str:
     return "".join(secrets.choice(SAFE_CHARS) for _ in range(length))
 
 
-def generate_short_code(length: int = SHORT_CODE_LENGTH) -> str:
-    return generate_code(length)
-
-
 def code_exists(conn, code: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM links WHERE code = ? LIMIT 1",
@@ -152,10 +148,6 @@ def get_vless_by_code(code: str | None) -> str | None:
         ).fetchone()
 
     return row["url"] if row else None
-
-
-def get_original_url(code: str) -> str | None:
-    return get_vless_by_code(code)
 
 
 def _extract_code_from_url(short_url: str | None) -> str | None:
