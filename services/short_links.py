@@ -1,5 +1,6 @@
 import secrets
 import sqlite3
+import re
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -8,6 +9,8 @@ from database.connection import DATETIME_FORMAT, get_connection
 
 SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 SHORT_CODE_LENGTH = 8
+MAX_SHORT_CODE_LENGTH = 32
+CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def init_short_links_schema(conn):
@@ -27,12 +30,27 @@ def init_short_links_schema(conn):
         columns.add("url")
     if "vless" not in columns:
         conn.execute("ALTER TABLE links ADD COLUMN vless TEXT")
+        columns.add("vless")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_links_code
         ON links (code)
         """
     )
+    if "url" in columns:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_links_url
+            ON links (url)
+            """
+        )
+    if "vless" in columns:
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_links_vless
+            ON links (vless)
+            """
+        )
 
 
 def _table_columns(conn) -> set[str]:
@@ -45,7 +63,7 @@ def _table_columns(conn) -> set[str]:
 def _link_select_expression(conn) -> str | None:
     columns = _table_columns(conn)
     if "url" in columns and "vless" in columns:
-        return "COALESCE(url, vless)"
+        return "COALESCE(NULLIF(vless, ''), NULLIF(url, ''))"
     if "url" in columns:
         return "url"
     if "vless" in columns:
@@ -63,34 +81,64 @@ def _normalize_base_url(value: str | None) -> str | None:
     return value.strip().rstrip("/")
 
 
+def normalize_code(code: str | None) -> str | None:
+    if not code:
+        return None
+
+    normalized_code = str(code).strip()
+    if not normalized_code:
+        return None
+    if len(normalized_code) > MAX_SHORT_CODE_LENGTH:
+        return None
+    if not CODE_PATTERN.fullmatch(normalized_code):
+        return None
+    return normalized_code
+
+
 def generate_code(length: int = SHORT_CODE_LENGTH) -> str:
     if length <= 0:
         raise ValueError("length должен быть больше 0")
+    if length > MAX_SHORT_CODE_LENGTH:
+        raise ValueError("length не может быть больше 32")
     return "".join(secrets.choice(SAFE_CHARS) for _ in range(length))
 
 
 def code_exists(conn, code: str) -> bool:
+    normalized_code = normalize_code(code)
+    if not normalized_code:
+        return False
+
     row = conn.execute(
         "SELECT 1 FROM links WHERE code = ? LIMIT 1",
-        (code,),
+        (normalized_code,),
     ).fetchone()
     return row is not None
 
 
 def find_existing_code(conn, vless_link: str) -> str | None:
-    value_expression = _link_select_expression(conn)
-    if not value_expression:
+    columns = _table_columns(conn)
+    conditions = []
+    params = []
+
+    if "vless" in columns:
+        conditions.append("vless = ?")
+        params.append(vless_link)
+    if "url" in columns:
+        conditions.append("url = ?")
+        params.append(vless_link)
+
+    if not conditions:
         return None
 
     row = conn.execute(
         f"""
         SELECT code
         FROM links
-        WHERE {value_expression} = ?
+        WHERE {" OR ".join(conditions)}
         ORDER BY id DESC
         LIMIT 1
         """,
-        (vless_link,),
+        params,
     ).fetchone()
     return row["code"] if row else None
 
@@ -98,6 +146,11 @@ def find_existing_code(conn, vless_link: str) -> str | None:
 def insert_short_link(conn, code: str, vless_link: str):
     columns = _table_columns(conn)
     created_at = _format_datetime(datetime.now())
+    normalized_code = normalize_code(code)
+    normalized_vless_link = vless_link.strip()
+
+    if not normalized_code:
+        raise ValueError("Некорректный короткий код")
 
     if "url" in columns and "vless" in columns:
         conn.execute(
@@ -105,7 +158,12 @@ def insert_short_link(conn, code: str, vless_link: str):
             INSERT INTO links (code, url, vless, created_at)
             VALUES (?, ?, ?, ?)
             """,
-            (code, vless_link, vless_link, created_at),
+            (
+                normalized_code,
+                normalized_vless_link,
+                normalized_vless_link,
+                created_at,
+            ),
         )
         return
 
@@ -115,7 +173,7 @@ def insert_short_link(conn, code: str, vless_link: str):
             INSERT INTO links (code, url, created_at)
             VALUES (?, ?, ?)
             """,
-            (code, vless_link, created_at),
+            (normalized_code, normalized_vless_link, created_at),
         )
         return
 
@@ -125,7 +183,7 @@ def insert_short_link(conn, code: str, vless_link: str):
             INSERT INTO links (code, vless, created_at)
             VALUES (?, ?, ?)
             """,
-            (code, vless_link, created_at),
+            (normalized_code, normalized_vless_link, created_at),
         )
         return
 
@@ -133,7 +191,8 @@ def insert_short_link(conn, code: str, vless_link: str):
 
 
 def get_vless_by_code(code: str | None) -> str | None:
-    if not code:
+    normalized_code = normalize_code(code)
+    if not normalized_code:
         return None
 
     with get_connection() as conn:
@@ -144,10 +203,10 @@ def get_vless_by_code(code: str | None) -> str | None:
 
         row = conn.execute(
             f"SELECT {value_expression} AS url FROM links WHERE code = ?",
-            (code.strip(),),
+            (normalized_code,),
         ).fetchone()
 
-    return row["url"] if row else None
+    return row["url"].strip() if row and row["url"] else None
 
 
 def _extract_code_from_url(short_url: str | None) -> str | None:
@@ -181,11 +240,12 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
     if not vless_link or not vless_link.strip():
         raise ValueError("vless_link не может быть пустым")
 
+    normalized_vless_link = vless_link.strip()
     normalized_base_url = _normalize_base_url(
         base_url or SHORT_LINK_BASE_URL
     )
     if not normalized_base_url:
-        return vless_link
+        return normalized_vless_link
     short_base_url = (
         normalized_base_url
         if normalized_base_url.endswith("/s")
@@ -194,7 +254,7 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
 
     with get_connection() as conn:
         init_short_links_schema(conn)
-        existing_code = find_existing_code(conn, vless_link.strip())
+        existing_code = find_existing_code(conn, normalized_vless_link)
         if existing_code:
             return f"{short_base_url}/{existing_code}"
 
@@ -203,7 +263,7 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
             if code_exists(conn, code):
                 continue
             try:
-                insert_short_link(conn, code, vless_link.strip())
+                insert_short_link(conn, code, normalized_vless_link)
                 return f"{short_base_url}/{code}"
             except sqlite3.IntegrityError:
                 continue
@@ -212,10 +272,31 @@ def create_short_link(vless_link: str, base_url: str | None = None) -> str:
 
 
 def delete_short_link_by_url(short_url: str | None):
-    code = _extract_code_from_url(short_url)
-    if not code:
+    raw_value = short_url.strip() if short_url else None
+    if not raw_value:
         return
 
     with get_connection() as conn:
         init_short_links_schema(conn)
-        conn.execute("DELETE FROM links WHERE code = ?", (code,))
+        if raw_value.startswith("vless://"):
+            columns = _table_columns(conn)
+            conditions = []
+            params = []
+
+            if "vless" in columns:
+                conditions.append("vless = ?")
+                params.append(raw_value)
+            if "url" in columns:
+                conditions.append("url = ?")
+                params.append(raw_value)
+
+            if conditions:
+                conn.execute(
+                    f"DELETE FROM links WHERE {' OR '.join(conditions)}",
+                    params,
+                )
+            return
+
+        code = normalize_code(_extract_code_from_url(raw_value))
+        if code:
+            conn.execute("DELETE FROM links WHERE code = ?", (code,))
