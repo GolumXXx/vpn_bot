@@ -1,10 +1,12 @@
 import html
 import json
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from config import DB_PATH
+from services.platega import PlategaAPIError, PlategaConfigError, PlategaWebhookAuthError
+from services.platega_webhook import process_webhook
 from services.short_links import get_vless_by_code, normalize_code
 
 app = FastAPI()
@@ -127,6 +129,26 @@ def render_key_page(vless: str) -> str:
 @app.get("/api/health")
 def healthcheck():
     return {"status": "ok"}
+
+
+@app.post("/api/payment/webhook")
+async def payment_webhook(request: Request):
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+
+    try:
+        result = await process_webhook(payload, request.headers)
+    except PlategaWebhookAuthError:
+        print("[PLATEGA] unauthorized webhook")
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    except PlategaConfigError:
+        return JSONResponse({"ok": False, "error": "platega is not configured"}, status_code=503)
+    except PlategaAPIError:
+        return JSONResponse({"ok": False, "error": "platega verification failed"}, status_code=502)
+
+    return JSONResponse(result, status_code=200)
 
 
 @app.get("/s/{code}", response_class=HTMLResponse)

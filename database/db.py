@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 
 from database.connection import DATETIME_FORMAT, get_connection
-from repositories import payment_repo
+from repositories import payment_repo, platega_payment_repo
 from services.short_links import (
     delete_short_link_by_url,
     init_short_links_schema,
@@ -908,6 +908,7 @@ def init_db():
             )
             """
         )
+        platega_payment_repo.init_schema_conn(conn)
         init_short_links_schema(conn)
         _add_column_if_missing(conn, "manual_payments", "idempotency_key", "TEXT")
         _add_column_if_missing(conn, "manual_payments", "manual_reminded_at", "TEXT")

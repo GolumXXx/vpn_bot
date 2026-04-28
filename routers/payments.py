@@ -1,7 +1,9 @@
+import asyncio
 import logging
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import (
     MANUAL_PAYMENT_URL,
@@ -43,7 +45,9 @@ from keyboards import (
     renew_menu,
 )
 from services.payment_service import fulfill_paid_order
-from services.payment_providers import ManualPaymentProvider
+from services import platega
+from services.payment_providers import ManualPaymentProvider, PlategaPaymentProvider
+from services.platega import PlategaAPIError, PlategaConfigError
 from services.xui_client import XUIError
 from texts.common import GENERIC_ERROR_TEXT, MAIN_MENU_TEXT, VPN_KEY_ISSUE_ERROR_TEXT
 from utils.admin import ADMIN_IDS, is_admin
@@ -95,6 +99,44 @@ def get_tariff_payment_url(tariff_code: str) -> str | None:
 
 
 manual_payment_provider = ManualPaymentProvider(get_tariff_payment_url)
+platega_payment_provider = PlategaPaymentProvider()
+
+
+def get_platega_payment_menu(payment_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Оплатить", url=payment_url)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_renew")],
+        ]
+    )
+
+
+def build_platega_payment_text(payment_id: str | None, tariff: dict) -> str:
+    lines = [
+        "💳 Оплата VPN",
+        "",
+        f"Тариф: {tariff['label']}",
+        f"Стоимость: {tariff['price']} ₽",
+        "",
+        "Нажми «Оплатить», чтобы перейти к оплате.",
+    ]
+    if payment_id:
+        lines.extend(["", f"ID оплаты: {payment_id}"])
+    return "\n".join(lines)
+
+
+async def create_platega_payment_for_user(user, tariff_code: str, tariff: dict):
+    add_or_update_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+    )
+    return await asyncio.to_thread(
+        platega_payment_provider.create_payment,
+        telegram_id=user.id,
+        tariff_code=tariff_code,
+        amount=tariff["price"],
+    )
 
 
 def build_manual_payment_text(payment, tariff: dict, payment_url: str | None = None) -> str:
@@ -252,6 +294,51 @@ async def send_receipt_to_admins(bot, user, payment, tariff: dict) -> int:
     return sent_count
 
 
+@router.message(Command("buy"))
+async def buy_command_handler(message: Message):
+    tariff_code = "1m"
+    tariff = TARIFFS[tariff_code]
+
+    if not platega.is_configured():
+        await message.answer(MANUAL_PAYMENT_UNAVAILABLE_TEXT)
+        return
+
+    try:
+        payment_result = await create_platega_payment_for_user(
+            message.from_user,
+            tariff_code,
+            tariff,
+        )
+    except (PlategaConfigError, PlategaAPIError):
+        logger.exception(
+            "Failed to create Platega payment from /buy: user_id=%s tariff=%s",
+            message.from_user.id,
+            tariff_code,
+        )
+        await message.answer("Не удалось создать оплату. Попробуй позже.")
+        return
+    except Exception:
+        logger.exception(
+            "Unexpected Platega payment error from /buy: user_id=%s tariff=%s",
+            message.from_user.id,
+            tariff_code,
+        )
+        await message.answer(GENERIC_ERROR_TEXT)
+        return
+
+    add_bot_log(
+        "platega_payment_created",
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        order_id=payment_result.payment_id,
+        message=f"Создана Platega оплата: тариф={tariff_code}",
+    )
+    await message.answer(
+        build_platega_payment_text(payment_result.payment_id, tariff),
+        reply_markup=get_platega_payment_menu(payment_result.payment_url),
+    )
+
+
 @router.callback_query(F.data == "renew_sub")
 async def renew_sub_handler(callback: CallbackQuery):
     await safe_edit_text(
@@ -302,11 +389,6 @@ async def tariff_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("pay_"))
 async def process_payment(callback: CallbackQuery):
-    if not ADMIN_IDS:
-        logger.error("Manual payment requested but ADMIN_IDS are not configured")
-        await callback.answer(MANUAL_PAYMENT_UNAVAILABLE_TEXT, show_alert=True)
-        return
-
     tariff_code = callback.data.removeprefix("pay_")
     tariff = TARIFFS.get(tariff_code)
     if not tariff:
@@ -315,6 +397,55 @@ async def process_payment(callback: CallbackQuery):
         return
 
     user = callback.from_user
+
+    if platega.is_configured():
+        try:
+            payment_result = await create_platega_payment_for_user(
+                user,
+                tariff_code,
+                tariff,
+            )
+            logger.info(
+                "Created Platega payment: payment_id=%s user_id=%s tariff=%s",
+                payment_result.payment_id,
+                user.id,
+                tariff_code,
+            )
+            add_bot_log(
+                "platega_payment_created",
+                telegram_id=user.id,
+                username=user.username,
+                order_id=payment_result.payment_id,
+                message=f"Создана Platega оплата: тариф={tariff_code}",
+            )
+            await safe_edit_text(
+                callback.message,
+                build_platega_payment_text(payment_result.payment_id, tariff),
+                reply_markup=get_platega_payment_menu(payment_result.payment_url),
+            )
+            await callback.answer("Ссылка на оплату создана ✅", show_alert=True)
+            return
+        except (PlategaConfigError, PlategaAPIError):
+            logger.exception(
+                "Failed to create Platega payment: user_id=%s tariff=%s",
+                user.id,
+                tariff_code,
+            )
+            await callback.answer("Не удалось создать оплату. Попробуй позже.", show_alert=True)
+            return
+        except Exception:
+            logger.exception(
+                "Unexpected Platega payment error: user_id=%s tariff=%s",
+                user.id,
+                tariff_code,
+            )
+            await callback.message.answer(GENERIC_ERROR_TEXT)
+            return
+
+    if not ADMIN_IDS:
+        logger.error("Manual payment requested but ADMIN_IDS are not configured")
+        await callback.answer(MANUAL_PAYMENT_UNAVAILABLE_TEXT, show_alert=True)
+        return
 
     try:
         add_or_update_user(

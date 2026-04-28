@@ -1,8 +1,13 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
+import json
 from typing import Any
 
+from database.connection import DATETIME_FORMAT
 from database.db import create_manual_payment, get_manual_payment_by_order_id
+from repositories import platega_payment_repo
+from services import platega
 from utils.rows import row_get
 
 
@@ -90,3 +95,47 @@ class StarsPaymentProvider(PaymentProvider):
 
     def check_payment(self, *, payment_id: str) -> PaymentCheckResult:
         raise NotImplementedError("Telegram Stars payment provider is not configured")
+
+
+class PlategaPaymentProvider(PaymentProvider):
+    provider = "platega"
+
+    def create_payment(self, *, telegram_id: int, tariff_code: str, amount: int | None = None) -> PaymentCreateResult:
+        if amount is None:
+            raise ValueError("amount is required for Platega payment")
+
+        result = platega.create_payment(
+            user_id=telegram_id,
+            amount=amount,
+            tariff_code=tariff_code,
+        )
+        now = datetime.now().strftime(DATETIME_FORMAT)
+        payment_id = result["payment_id"]
+        platega_payment_repo.insert_payment(
+            payment_id=payment_id,
+            telegram_id=telegram_id,
+            tariff_code=tariff_code,
+            amount=amount,
+            currency=result["currency"],
+            status="pending",
+            payment_url=result["payment_url"],
+            request_payload=json.dumps(result["request_payload"], ensure_ascii=False),
+            created_at=now,
+            updated_at=now,
+        )
+        return PaymentCreateResult(
+            provider=self.provider,
+            payment_id=payment_id,
+            status=result.get("status") or "pending",
+            payment_url=result["payment_url"],
+            raw_payment=result,
+        )
+
+    def check_payment(self, *, payment_id: str) -> PaymentCheckResult:
+        payment = platega_payment_repo.get_by_payment_id(payment_id)
+        return PaymentCheckResult(
+            provider=self.provider,
+            payment_id=payment_id,
+            status=row_get(payment, "status"),
+            raw_payment=payment,
+        )
