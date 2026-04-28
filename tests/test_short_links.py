@@ -28,7 +28,7 @@ class ShortLinksTest(unittest.TestCase):
         )
         self.temp_dir.cleanup()
 
-    def test_short_link_is_saved_reused_and_redirected(self):
+    def test_short_link_is_saved_reused_and_rendered_as_html(self):
         vless_link = (
             "vless://00000000-0000-4000-8000-000000000000@example.com:443"
             "?type=tcp&security=reality#test"
@@ -49,9 +49,15 @@ class ShortLinksTest(unittest.TestCase):
         self.assertEqual(get_vless_by_code(code), vless_link)
 
         response = open_short_link(code)
+        body = response.body.decode("utf-8")
 
-        self.assertEqual(response.status_code, 307)
-        self.assertEqual(response.headers["location"], vless_link)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertNotIn("location", response.headers)
+        self.assertIn("Скопировать", body)
+        self.assertIn("Открыть VPN", body)
+        self.assertIn("copyKey(false)", body)
+        self.assertIn("vless://", body)
 
         delete_short_link_by_url(vless_link)
         self.assertIsNone(get_vless_by_code(code))
