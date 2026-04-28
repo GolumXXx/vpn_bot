@@ -1,11 +1,9 @@
 import sqlite3
 import threading
 from contextlib import contextmanager
-from pathlib import Path
 
+from config import DB_PATH
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "bot.db"
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SQLITE_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MS = SQLITE_TIMEOUT_SECONDS * 1000

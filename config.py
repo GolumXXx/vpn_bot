@@ -13,6 +13,7 @@ def _clean_env_value(name: str) -> str | None:
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+DB_PATH = _clean_env_value("DB_PATH") or "/opt/vpn_bot/vpn_bot/bot.db"
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "your_support_username")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "your_bot_username")

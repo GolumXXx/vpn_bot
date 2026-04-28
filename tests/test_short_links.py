@@ -56,10 +56,10 @@ class ShortLinksTest(unittest.TestCase):
         delete_short_link_by_url(vless_link)
         self.assertIsNone(get_vless_by_code(code))
 
-    def test_invalid_code_returns_404(self):
+    def test_invalid_code_returns_400(self):
         response = open_short_link("bad code with spaces")
 
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":
